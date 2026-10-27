@@ -73,7 +73,7 @@
 </head>
 <body>
 <div id="hud">
-  <span><b>Thrust Land</b> · 手感原型 <b>v10</b></span>
+  <span><b>Thrust Land</b> · 手感原型 <b>v11</b></span>
   <span id="craftLabel">机体 方块排喷</span>
   <span id="alt">高度 — m</span>
   <span id="fuel">燃料 —</span>
@@ -138,8 +138,9 @@
     spawnAltitude: 3000,
     camLerp: 6,
     craftScreenFrac: 0.36,
-    // v10: continuous cam (no landing cut), no params panel, ground minimap
-    // keep v7–v9: screen-space thrust, simple sky, streaks, fuel, tilt, no select
+    // v11: body-axis thrust + screen-x gimbal (tilt couples to horizontal accel)
+    // keep v7–v10: single finger, no cooldown, screen coords, simple sky, streaks,
+    // continuous cam, minimap, fuel, tilt spawn, no select
     fuelMax: 100,
     fuelBurnPerSec: 7.5,
     spawnTiltMinDeg: 15,
@@ -257,22 +258,26 @@
     return world.groundY - craftLowestY();
   }
 
-  function clampAngle(vec, maxDeg) {
-    const down = bodyDown();
-    const maxRad = maxDeg * Math.PI / 180;
-    let vx = vec.x, vy = vec.y;
-    const len = Math.hypot(vx, vy) || 1;
-    vx /= len; vy /= len;
-    const cross = down.x * vy - down.y * vx;
-    const dot = down.x * vx + down.y * vy;
-    let ang = Math.atan2(cross, dot);
-    if (ang > maxRad) ang = maxRad;
-    if (ang < -maxRad) ang = -maxRad;
-    const c = Math.cos(ang), s = Math.sin(ang);
-    return {
-      x: down.x * c - down.y * s,
-      y: down.x * s + down.y * c,
-    };
+  /** Rotate body-down by gimbal (rad, + = toward body +X). */
+  function flameFromGimbal(gimbalRad) {
+    // body-local flame = rot(0,1, gimbal) = (-sin g, cos g) wait: rot(0,1,g)=(-sin, cos)
+    const local = rot(0, 1, gimbalRad);
+    return rot(local.x, local.y, craft.angle);
+  }
+
+  /**
+   * v11: gimbal from finger's *screen-x* offset vs craft (not world aim-at-finger).
+   * Holding directly below → gimbal 0 → thrust along body axis → tilt yields vx.
+   */
+  function gimbalFromPointer(p) {
+    const maxRad = cfg.maxAngleDeg * Math.PI / 180;
+    const craftSx = craft.x - cam.x + world.w / 2;
+    const lateral = p.sx - craftSx; // CSS px; camera keeps craft near center
+    const span = Math.max(64, world.w * 0.18);
+    let g = (lateral / span) * maxRad;
+    if (g > maxRad) g = maxRad;
+    if (g < -maxRad) g = -maxRad;
+    return g;
   }
 
   /** Canvas CSS-pixel coords from client (independent of camera / world fall). */
@@ -402,7 +407,7 @@
     const outOfFuel = fuel <= 0;
 
     // v9: re-project held finger from fixed screen pixel → current world each frame
-    // so camera follow / free-fall cannot drift thrust aim relative to the craft on screen.
+    // (nozzle bind / overlays stay glued; v11 thrust dir is body-axis + screen-x gimbal).
     syncAllPointersWorld();
 
     for (const p of pointers) {
@@ -412,13 +417,10 @@
       p.nx = n.x; p.ny = n.y;
       if (outOfFuel) continue;
 
-      let dx = p.x - n.x;
-      let dy = p.y - n.y;
-      if (dx * dx + dy * dy < 1e-6) {
-        const d = bodyDown();
-        dx = d.x; dy = d.y;
-      }
-      const flame = clampAngle({ x: dx, y: dy }, cfg.maxAngleDeg);
+      // v11: exhaust along body longitudinal axis; finger screen-x only gimbals.
+      // Gravity stays world +Y; integrating vx,vy means a tilted burn makes horizontal speed.
+      const g = gimbalFromPointer(p);
+      const flame = flameFromGimbal(g);
       const fx = -flame.x * cfg.thrust;
       const fy = -flame.y * cfg.thrust;
       p.fx = fx; p.fy = fy;
