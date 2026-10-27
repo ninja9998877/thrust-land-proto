@@ -59,25 +59,43 @@
     border: 1px solid #4a6; background: #1a3a28; color: #dfffe8; cursor: pointer;
   }
   #params button:hover { background: #234e35; }
+  #params button.secondary {
+    border-color: #468; background: #1a2840; color: #d0e4ff;
+  }
+  #params button.secondary:hover { background: #243656; }
   #params .title { font-weight: 600; color: #8ec5ff; margin-bottom: 4px; }
+  #params .craftRow { display: flex; gap: 6px; margin: 8px 0 2px; }
+  #params .craftRow button {
+    flex: 1; margin-top: 0; padding: 6px 0; font-size: 11px;
+    border: 1px solid #456; background: #162033; color: #b8c8e0;
+  }
+  #params .craftRow button.active {
+    border-color: #6eb6ff; background: #1e3a5c; color: #e8f2ff; font-weight: 600;
+  }
+  #params .craftRow button:hover { background: #243656; }
 </style>
 </head>
 <body>
 <div id="hud">
-  <span><b>Thrust Land</b> · 手感原型 <b>v6</b></span>
+  <span><b>Thrust Land</b> · 手感原型 <b>v7</b></span>
+  <span id="craftLabel">机体 方块排喷</span>
   <span id="alt">高度 — m</span>
   <span id="fuel">燃料 —</span>
   <span id="stat">就绪</span>
 </div>
 <div id="params">
   <div class="title">参数</div>
+  <div class="craftRow">
+    <button type="button" id="craftRect" class="active">方块·多喷口</button>
+    <button type="button" id="craftRocket">细长·单喷口</button>
+  </div>
   <label>推力 <span id="vThrust">90</span><input id="thrust" type="range" min="40" max="360" value="90" /></label>
   <label>偏角° <span id="vAngle">60</span><input id="angle" type="range" min="15" max="80" value="60" /></label>
   <label>重力 <span id="vG">55</span><input id="g" type="range" min="20" max="120" value="55" /></label>
   <label>阻尼 <span id="vDrag">0.35</span><input id="drag" type="range" min="0" max="80" value="35" /></label>
   <button id="resetBtn" type="button">复位 (R)</button>
 </div>
-<div id="hint">触屏：按住拖动喷气（底栏喷气区也可）· 多指各绑最近喷口 · 燃料有限（快抖易耗尽）· 换口有短冷却 · 鼠标左/右键 · R 复位加满 · 开局约 3000 m 随机倾角</div>
+<div id="hint">单指按住拖动喷气 · 右上切换「方块·多喷口 / 细长·单喷口」（切换会复位）· 燃料有限 · 第二指忽略 · R 复位 · 开局约 3000 m 随机倾角</div>
 <canvas id="c"></canvas>
 <script>
 (() => {
@@ -88,9 +106,34 @@
   const statEl = document.getElementById("stat");
   const altEl = document.getElementById("alt");
   const fuelEl = document.getElementById("fuel");
+  const craftLabelEl = document.getElementById("craftLabel");
+  const craftRectBtn = document.getElementById("craftRect");
+  const craftRocketBtn = document.getElementById("craftRocket");
 
   // World units: 1 unit ≈ 1 m. +Y is down (canvas-like). Ground at y = 0.
-  // Altitude = groundY - craftLowestY (机体最低点到地面).
+  const CRAFTS = {
+    rect: {
+      id: "rect",
+      label: "方块排喷",
+      bodyW: 56,
+      bodyH: 96,
+      nozzleCount: 9,
+      nozzleMarginX: 6,
+      nozzleY: 0.48,
+      shape: "rect",
+    },
+    rocket: {
+      id: "rocket",
+      label: "细长火箭",
+      bodyW: 28,
+      bodyH: 120,
+      nozzleCount: 1,
+      nozzleMarginX: 0,
+      nozzleY: 0.48,
+      shape: "rocket",
+    },
+  };
+
   const cfg = {
     thrust: 90,
     maxAngleDeg: 60,
@@ -99,21 +142,22 @@
     angularDrag: 8,
     torqueCoef: 0.011,
     omegaCap: 2.2,
-    bodyW: 56,
-    bodyH: 96,
-    nozzleCount: 9,
-    nozzleMarginX: 6,
-    nozzleY: 0.48, // local +Y down; bottom edge relative to center
+    bodyW: CRAFTS.rect.bodyW,
+    bodyH: CRAFTS.rect.bodyH,
+    nozzleCount: CRAFTS.rect.nozzleCount,
+    nozzleMarginX: CRAFTS.rect.nozzleMarginX,
+    nozzleY: CRAFTS.rect.nozzleY,
     spawnAltitude: 3000,
     camLerp: 6,
-    craftScreenFrac: 0.36, // craft Y within playable viewport (from top)
-    // v6 anti-shake: fuel + per-nozzle cooldown + random spawn tilt
+    craftScreenFrac: 0.36,
+    // v7: fuel + random tilt; single finger; no cooldown; craft switch
     fuelMax: 100,
-    fuelBurnPerSec: 7.5, // per actively thrusting nozzle; ~13s single-nozzle continuous
-    nozzleCooldownMs: 150,
+    fuelBurnPerSec: 7.5,
     spawnTiltMinDeg: 15,
     spawnTiltMaxDeg: 45,
   };
+
+  let craftType = "rect";
 
   const world = { w: 800, h: 600, groundY: 0 };
   const cam = { x: 0, y: 0 };
@@ -125,13 +169,23 @@
   };
 
   let fuel = cfg.fuelMax;
-  /** @type {number[]} absolute ms timestamps; nozzle i ready when performance.now() >= this */
-  let nozzleReadyAt = [];
-  /** last bound nozzle per pointer id — detect switch for cooldown */
-  const pointerNozzlePrev = new Map();
 
   /** @type {{id:string,x:number,y:number,active:boolean,nx:number,ny:number,fx:number,fy:number,flameX:number,flameY:number,nozzle:number|null,button?:number}[]} */
   let pointers = [];
+
+  function applyCraftType(type, doReset) {
+    const def = CRAFTS[type] || CRAFTS.rect;
+    craftType = def.id;
+    cfg.bodyW = def.bodyW;
+    cfg.bodyH = def.bodyH;
+    cfg.nozzleCount = def.nozzleCount;
+    cfg.nozzleMarginX = def.nozzleMarginX;
+    cfg.nozzleY = def.nozzleY;
+    craftLabelEl.textContent = "机体 " + def.label;
+    craftRectBtn.classList.toggle("active", craftType === "rect");
+    craftRocketBtn.classList.toggle("active", craftType === "rocket");
+    if (doReset) reset();
+  }
 
   function bindParams() {
     const map = [
@@ -148,6 +202,8 @@
       sync();
     }
     document.getElementById("resetBtn").addEventListener("click", reset);
+    craftRectBtn.addEventListener("click", () => applyCraftType("rect", true));
+    craftRocketBtn.addEventListener("click", () => applyCraftType("rocket", true));
   }
 
   function resize() {
@@ -170,46 +226,20 @@
     return sign * deg * Math.PI / 180;
   }
 
-  function resetNozzleCooldowns() {
-    nozzleReadyAt = Array.from({ length: cfg.nozzleCount }, () => 0);
-  }
-
-  function armNozzleCooldown(i, now) {
-    if (i == null || i < 0) return;
-    const until = now + cfg.nozzleCooldownMs;
-    if (until > nozzleReadyAt[i]) nozzleReadyAt[i] = until;
-  }
-
-  function noteNozzleBind(pointerId, nozzle, now) {
-    const prev = pointerNozzlePrev.has(pointerId)
-      ? pointerNozzlePrev.get(pointerId)
-      : null;
-    if (prev != null && prev !== nozzle) {
-      // left a nozzle after spraying → that mouth cools before reuse
-      armNozzleCooldown(prev, now);
-      // actual switch (not first bind) → new mouth also waits briefly
-      if (nozzle != null) armNozzleCooldown(nozzle, now);
-    }
-    if (nozzle == null) pointerNozzlePrev.delete(pointerId);
-    else pointerNozzlePrev.set(pointerId, nozzle);
-  }
-
   function reset() {
     craft.x = 0;
-    // bottom ≈ craft.y + bodyH/2 when upright; want altitude ≈ spawnAltitude
     craft.y = world.groundY - cfg.spawnAltitude - cfg.bodyH / 2;
     craft.vx = 0;
     craft.vy = 0;
     craft.angle = randomSpawnTilt();
     craft.omega = 0;
     fuel = cfg.fuelMax;
-    resetNozzleCooldowns();
-    pointerNozzlePrev.clear();
     pointers = [];
     cam.x = craft.x;
     cam.y = craft.y + world.h / 2 - playH * cfg.craftScreenFrac;
     const deg = (craft.angle * 180 / Math.PI).toFixed(0);
-    statEl.textContent = `已复位 · 倾角 ${deg}° · 燃料满`;
+    const name = (CRAFTS[craftType] || CRAFTS.rect).label;
+    statEl.textContent = `已复位 · ${name} · 倾角 ${deg}° · 燃料满`;
   }
 
   function rot(lx, ly, ang) {
@@ -236,7 +266,6 @@
     return rot(0, 1, craft.angle);
   }
 
-  /** Lowest point of craft AABB corners in world Y (+Y down). */
   function craftLowestY() {
     const halfW = cfg.bodyW / 2, halfH = cfg.bodyH / 2;
     let maxY = -Infinity;
@@ -244,6 +273,7 @@
       [-halfW, -halfH], [halfW, -halfH],
       [-halfW, halfH], [halfW, halfH],
     ];
+    // rocket tip/fins roughly covered by rect AABB; OK for altitude
     for (const [lx, ly] of corners) {
       const r = rot(lx, ly, craft.angle);
       const wy = craft.y + r.y;
@@ -252,7 +282,6 @@
     return maxY;
   }
 
-  /** Altitude in meters: ground to craft lowest point. */
   function altitude() {
     return world.groundY - craftLowestY();
   }
@@ -317,65 +346,53 @@
     } else {
       p.x = w.x; p.y = w.y; p.active = true;
     }
-    // v4: rebind nearest free nozzle on every down/move (not locked to down)
     p.nozzle = nearestFreeNozzle(p.x, p.y, occupiedNozzles(id));
     if (p.nozzle < 0) p.nozzle = null;
-    noteNozzleBind(id, p.nozzle, performance.now());
   }
 
-  function rebindAllPointers() {
-    // Stable order: clear then assign so multi-touch gets distinct nozzles
-    const now = performance.now();
-    for (const p of pointers) p.nozzle = null;
+  function rebindActivePointer() {
     for (const p of pointers) {
       p.nozzle = nearestFreeNozzle(p.x, p.y, occupiedNozzles(p.id));
       if (p.nozzle < 0) p.nozzle = null;
-      noteNozzleBind(p.id, p.nozzle, now);
     }
   }
 
   function removePointer(id) {
-    const now = performance.now();
-    const prev = pointerNozzlePrev.has(id) ? pointerNozzlePrev.get(id) : null;
-    if (prev != null) armNozzleCooldown(prev, now);
     pointers = pointers.filter(p => p.id !== id);
-    pointerNozzlePrev.delete(id);
   }
 
   canvas.addEventListener("pointerdown", (e) => {
-    if (e.pointerType === "mouse" && e.button !== 0 && e.button !== 2) return;
+    // v7: single finger / left mouse only; ignore 2nd finger & right button
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    if (pointers.length >= 1) return;
     canvas.setPointerCapture(e.pointerId);
-    const id = e.pointerType === "mouse" ? `mouse-${e.button}` : `t-${e.pointerId}`;
+    const id = e.pointerType === "mouse" ? "mouse-0" : `t-${e.pointerId}`;
     upsertPointer(id, e.clientX, e.clientY, e.button);
     e.preventDefault();
   }, { passive: false });
 
   canvas.addEventListener("pointermove", (e) => {
     if (e.pointerType === "mouse") {
-      let any = false;
-      for (const p of pointers) {
-        if (!p.id.startsWith("mouse-")) continue;
-        const w = screenToWorld(e.clientX, e.clientY);
-        p.x = w.x; p.y = w.y;
-        any = true;
-      }
-      if (any) rebindAllPointers();
+      const p = pointers.find(x => x.id === "mouse-0");
+      if (!p) return;
+      const w = screenToWorld(e.clientX, e.clientY);
+      p.x = w.x; p.y = w.y;
+      rebindActivePointer();
     } else {
       const id = `t-${e.pointerId}`;
       if (!pointers.some(p => p.id === id)) return;
       upsertPointer(id, e.clientX, e.clientY);
-      rebindAllPointers();
     }
     e.preventDefault();
   }, { passive: false });
 
   function endPointer(e) {
     if (e.pointerType === "mouse") {
-      removePointer(`mouse-${e.button}`);
+      if (e.button !== 0) return;
+      removePointer("mouse-0");
     } else {
       removePointer(`t-${e.pointerId}`);
     }
-    rebindAllPointers();
   }
   canvas.addEventListener("pointerup", endPointer);
   canvas.addEventListener("pointercancel", endPointer);
@@ -383,21 +400,20 @@
 
   window.addEventListener("keydown", (e) => {
     if (e.key === "r" || e.key === "R") reset();
+    if (e.key === "1") applyCraftType("rect", true);
+    if (e.key === "2") applyCraftType("rocket", true);
   });
 
   function applyThrustForces(dt) {
-    const now = performance.now();
     const firings = [];
     const outOfFuel = fuel <= 0;
 
     for (const p of pointers) {
-      // clear thrust viz each step; only set when actually firing
       p.fx = 0; p.fy = 0; p.flameX = 0; p.flameY = 0;
       if (p.nozzle == null) continue;
       const n = nozzleWorld(p.nozzle);
       p.nx = n.x; p.ny = n.y;
       if (outOfFuel) continue;
-      if (now < nozzleReadyAt[p.nozzle]) continue; // cooling after spray/switch
 
       let dx = p.x - n.x;
       let dy = p.y - n.y;
@@ -413,21 +429,11 @@
       firings.push({ nozzle: p.nozzle, n, fx, fy, flameX: flame.x, flameY: flame.y });
     }
 
-    // Burn fuel for nozzles that actually produced thrust this step
     if (firings.length && fuel > 0) {
       fuel = Math.max(0, fuel - cfg.fuelBurnPerSec * firings.length * dt);
     }
 
-    let torqueScale = 1;
-    if (firings.length >= 2) {
-      torqueScale = 0.32;
-      const a = firings[0], b = firings[1];
-      const aimDot = a.flameX * b.flameX + a.flameY * b.flameY;
-      if (aimDot > 0.65) torqueScale *= 0.45;
-    } else if (firings.length === 1) {
-      torqueScale = 0.55;
-    }
-
+    const torqueScale = firings.length === 1 ? 0.55 : 1;
     const I = (cfg.bodyW * cfg.bodyW + cfg.bodyH * cfg.bodyH) / 12 * 0.02;
     for (const f of firings) {
       craft.vx += f.fx * dt;
@@ -452,7 +458,6 @@
     craft.y += craft.vy * dt;
     craft.angle += craft.omega * dt;
 
-    // Soft horizontal bounds (wide corridor)
     const bound = 2500;
     if (craft.x < -bound) { craft.x = -bound; craft.vx *= -0.3; }
     if (craft.x > bound) { craft.x = bound; craft.vx *= -0.3; }
@@ -492,7 +497,6 @@
     cam.x += (followX - cam.x) * k;
     let camYTarget = followY;
 
-    // Near ground: clamp so ground sits at top of control strip (not filling it / not sunk off-screen)
     const alt = altitude();
     if (alt < playH * 1.25) {
       const gsy = world.groundY - followY + world.h / 2;
@@ -511,11 +515,9 @@
     return ((v % m) + m) % m;
   }
 
-  /** Multi-layer parallax sky — cam-driven, ground stays world-locked. */
   function drawParallax() {
     ctx.clearRect(0, 0, world.w, world.h);
 
-    // Deep sky gradient (very far: almost no scroll, slight hue shift with altitude)
     const skyShift = wrapMod(cam.y * 0.008, world.h);
     const sky = ctx.createLinearGradient(0, -skyShift * 0.3, 0, world.h - skyShift * 0.3);
     sky.addColorStop(0, "#060b18");
@@ -525,9 +527,8 @@
     ctx.fillStyle = sky;
     ctx.fillRect(0, 0, world.w, world.h);
 
-    const clipH = playH; // don't draw parallax into control strip
+    const clipH = playH;
 
-    // Layer 0 — far stars (slow)
     {
       const px = cam.x * 0.06, py = cam.y * 0.05;
       ctx.fillStyle = "#ffffff55";
@@ -539,7 +540,6 @@
       }
     }
 
-    // Layer 1 — mid starfield + vertical bands (clear horizontal drift)
     {
       const px = cam.x * 0.18, py = cam.y * 0.14;
       for (let i = 0; i < 8; i++) {
@@ -557,7 +557,6 @@
       }
     }
 
-    // Layer 2 — cloud / haze bands (strong Y parallax — obvious during free-fall)
     {
       const px = cam.x * 0.32, py = cam.y * 0.28;
       const bandH = 56;
@@ -567,7 +566,6 @@
         const alpha = 0.10 + (i & 1) * 0.06;
         ctx.fillStyle = `rgba(160,190,255,${alpha})`;
         ctx.fillRect(0, by, world.w, bandH * 0.55);
-        // soft lumps
         ctx.fillStyle = `rgba(200,220,255,${alpha + 0.05})`;
         for (let j = 0; j < 5; j++) {
           const cx = wrapMod(j * 170 + i * 40 - px, world.w + 120) - 60;
@@ -578,7 +576,6 @@
       }
     }
 
-    // Layer 3 — near mountains / jagged silhouettes (faster, still << 1)
     {
       const px = cam.x * 0.55, py = cam.y * 0.42;
       const baseY = clipH * 0.72 + wrapMod(-py * 0.15, 40) - 20;
@@ -596,7 +593,6 @@
       ctx.fillStyle = "#1a2740cc";
       ctx.fill();
 
-      // nearer ridge (even faster lateral)
       const px2 = cam.x * 0.72, py2 = cam.y * 0.55;
       const baseY2 = clipH * 0.82 + wrapMod(-py2 * 0.12, 30) - 15;
       ctx.beginPath();
@@ -613,7 +609,6 @@
       ctx.fill();
     }
 
-    // Layer 4 — near grid streaks (very obvious relative motion vs world ground)
     {
       const px = cam.x * 0.85, py = cam.y * 0.7;
       ctx.strokeStyle = "#6a8cc030";
@@ -637,14 +632,87 @@
     }
   }
 
+  function drawCraftBody() {
+    ctx.save();
+    ctx.translate(craft.x, craft.y);
+    ctx.rotate(craft.angle);
+    const halfW = cfg.bodyW / 2, halfH = cfg.bodyH / 2;
+    const shape = (CRAFTS[craftType] || CRAFTS.rect).shape;
+
+    if (shape === "rocket") {
+      // slim rocket: nose cone + body + fins
+      ctx.fillStyle = "#f2f6ff";
+      ctx.strokeStyle = "#6eb6ff";
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.moveTo(0, -halfH);
+      ctx.lineTo(halfW * 0.85, -halfH + halfW * 1.6);
+      ctx.lineTo(halfW * 0.85, halfH - 10);
+      ctx.lineTo(-halfW * 0.85, halfH - 10);
+      ctx.lineTo(-halfW * 0.85, -halfH + halfW * 1.6);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      // nose accent
+      ctx.fillStyle = "#ff6b6b";
+      ctx.beginPath();
+      ctx.moveTo(0, -halfH);
+      ctx.lineTo(halfW * 0.55, -halfH + halfW * 1.1);
+      ctx.lineTo(-halfW * 0.55, -halfH + halfW * 1.1);
+      ctx.closePath();
+      ctx.fill();
+      // fins
+      ctx.fillStyle = "#c8d8f0";
+      ctx.strokeStyle = "#6eb6ff";
+      ctx.beginPath();
+      ctx.moveTo(-halfW * 0.85, halfH - 28);
+      ctx.lineTo(-halfW * 1.55, halfH - 4);
+      ctx.lineTo(-halfW * 0.85, halfH - 10);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(halfW * 0.85, halfH - 28);
+      ctx.lineTo(halfW * 1.55, halfH - 4);
+      ctx.lineTo(halfW * 0.85, halfH - 10);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      // engine bell hint
+      ctx.fillStyle = "#8a9ab8";
+      ctx.fillRect(-halfW * 0.45, halfH - 10, halfW * 0.9, 8);
+    } else {
+      ctx.fillStyle = "#f2f6ff";
+      ctx.strokeStyle = "#6eb6ff";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.rect(-halfW, -halfH, cfg.bodyW, cfg.bodyH);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = "#ff6b6b";
+      ctx.fillRect(-8, -halfH, 16, 10);
+    }
+
+    for (let i = 0; i < cfg.nozzleCount; i++) {
+      const l = nozzleLocal(i);
+      const bound = pointers.some(p => p.nozzle === i);
+      const thrusting = bound && fuel > 0 && pointers.some(p => p.nozzle === i && (p.fx || p.fy));
+      if (thrusting) ctx.fillStyle = "#ffdd66";
+      else if (bound) ctx.fillStyle = "#ffb454";
+      else ctx.fillStyle = "#c48a4a";
+      ctx.beginPath();
+      ctx.arc(l.x, l.y, thrusting ? 4 : (cfg.nozzleCount === 1 ? 3.8 : 2.8), 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
   function draw() {
     drawParallax();
 
-    // World transform: camera
     ctx.save();
     ctx.translate(-cam.x + world.w / 2, -cam.y + world.h / 2);
 
-    // Ground plane (wide)
     const groundSpan = 8000;
     const gx0 = cam.x - groundSpan / 2;
     ctx.fillStyle = "#3a4a66";
@@ -653,7 +721,6 @@
     ctx.fillRect(gx0, world.groundY, groundSpan, 4);
     ctx.fillStyle = "#8fb86a";
     ctx.fillRect(gx0, world.groundY, groundSpan, 2);
-    // landing marks
     ctx.strokeStyle = "#ffffff18";
     ctx.lineWidth = 2;
     for (let x = Math.floor((cam.x - 2000) / 200) * 200; x < cam.x + 2000; x += 200) {
@@ -663,40 +730,11 @@
       ctx.stroke();
     }
 
-    // Craft
-    ctx.save();
-    ctx.translate(craft.x, craft.y);
-    ctx.rotate(craft.angle);
-    ctx.fillStyle = "#f2f6ff";
-    ctx.strokeStyle = "#6eb6ff";
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.rect(-cfg.bodyW / 2, -cfg.bodyH / 2, cfg.bodyW, cfg.bodyH);
-    ctx.fill();
-    ctx.stroke();
-    ctx.fillStyle = "#ff6b6b";
-    ctx.fillRect(-8, -cfg.bodyH / 2, 16, 10);
-    const nowDraw = performance.now();
-    for (let i = 0; i < cfg.nozzleCount; i++) {
-      const l = nozzleLocal(i);
-      const bound = pointers.some(p => p.nozzle === i);
-      const cooling = nowDraw < nozzleReadyAt[i];
-      const thrusting = bound && !cooling && fuel > 0 && pointers.some(p => p.nozzle === i && (p.fx || p.fy));
-      if (cooling) ctx.fillStyle = "#6a7080";
-      else if (thrusting) ctx.fillStyle = "#ffdd66";
-      else if (bound) ctx.fillStyle = "#ffb454";
-      else ctx.fillStyle = "#c48a4a";
-      ctx.beginPath();
-      ctx.arc(l.x, l.y, thrusting ? 3.5 : 2.8, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    ctx.restore();
+    drawCraftBody();
 
-    // Thrust debug (world) — only when force applied (fuel + not cooling)
     for (const p of pointers) {
       if (p.nozzle == null) continue;
       if (!(p.fx || p.fy)) {
-        // still show bind line faintly
         ctx.strokeStyle = "#ffffff33";
         ctx.lineWidth = 1;
         ctx.beginPath();
@@ -756,9 +794,8 @@
       }
     }
 
-    ctx.restore(); // end world
+    ctx.restore();
 
-    // Control strip (screen space)
     ctx.fillStyle = "#0a1020cc";
     ctx.fillRect(0, playH, world.w, controlH);
     ctx.strokeStyle = "#4a6a9a88";
@@ -770,7 +807,7 @@
     ctx.fillStyle = "#9eb6dccc";
     ctx.font = "12px ui-sans-serif, system-ui, sans-serif";
     ctx.textAlign = "center";
-    ctx.fillText("喷气区 · 按住并拖动（全屏亦可）", world.w / 2, playH + 22);
+    ctx.fillText("喷气区 · 单指按住并拖动（全屏亦可）", world.w / 2, playH + 22);
   }
 
   let last = performance.now();
@@ -805,6 +842,7 @@
 
   bindParams();
   resize();
+  applyCraftType("rect", false);
   reset();
   window.addEventListener("resize", () => { resize(); });
   if (window.visualViewport) {
