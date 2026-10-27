@@ -689,9 +689,10 @@
     const gy = world.groundY;
     const padImg = assets.pad_ashtray;
     if (padImg && padImg.complete && padImg.naturalWidth) {
-      const size = half * 2;
-      // bottom edge on ground; green cross baked in art
-      ctx.drawImage(padImg, px - size / 2, gy - size + 4, size, size);
+      // v0.1.2 side-view ashtray (384×192): width = padHalfW*2, bottom on ground
+      const w = half * 2;
+      const h = w * (padImg.naturalHeight / padImg.naturalWidth);
+      ctx.drawImage(padImg, px - w / 2, gy - h + 2, w, h);
     } else {
       ctx.fillStyle = "#2a3a28";
       ctx.fillRect(px - half, gy - 2, half * 2, 6);
