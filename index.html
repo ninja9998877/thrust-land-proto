@@ -101,12 +101,14 @@
   #controls #againBtn:hover { background: #243e5c; }
   #controls #againBtn.visible { display: block; }
   #outcome {
-    position: fixed; left: 50%; top: 22%; transform: translateX(-50%);
+    position: fixed; left: 50%; top: 20%; transform: translateX(-50%);
     z-index: 4; pointer-events: none;
-    padding: 10px 22px; border-radius: 12px;
-    font-size: 22px; font-weight: 700; letter-spacing: 0.04em;
+    padding: 12px 22px; border-radius: 12px;
+    font-size: 20px; font-weight: 700; letter-spacing: 0.03em;
     text-shadow: 0 2px 8px #000a;
     opacity: 0; transition: opacity 0.15s ease;
+    text-align: center; max-width: min(92vw, 420px);
+    white-space: pre-line; line-height: 1.25;
   }
   #outcome.show { opacity: 1; }
   #outcome.ok {
@@ -125,14 +127,15 @@
 </head>
 <body>
 <div id="hud">
-  <span><b>Thrust Land</b> · feel proto <b>v19</b></span>
+  <span><b>Thrust Land</b> · feel proto <b>v20</b></span>
+  <span id="levelLabel">Level 1/3</span>
   <span id="alt">Alt — m</span>
   <span id="fuel">Fuel —</span>
   <span id="stat">Ready</span>
 </div>
 <div id="controls" aria-label="Reset">
   <div class="craftRow">
-    <!-- v19: craft switcher hidden; single rocket layout; no craft-name UI -->
+    <!-- v20: craft switcher hidden; levels drive layout; no craft-name UI -->
     <button type="button" id="craftRocket" class="active">A</button>
     <button type="button" id="craftRect">B</button>
     <button type="button" id="craftBooster">C</button>
@@ -165,6 +168,7 @@
   const againBtn = document.getElementById("againBtn");
   const outcomeEl = document.getElementById("outcome");
   const flashEl = document.getElementById("flash");
+  const levelLabelEl = document.getElementById("levelLabel");
 
   // World units: 1 unit ≈ 1 m. +Y is down (canvas-like). Ground at y = 0.
   const CRAFTS = {
@@ -211,6 +215,34 @@
     },
   };
 
+  // v20: 3 levels by nozzle layout only — NO craft-name UI
+  // L1 rocket: bot3+top2 · L2 rect: bot6 no-top · L3 booster: bot3-center no-top (more stable than span-no-top)
+  const LEVELS = [
+    { craft: "rocket" },
+    { craft: "rect" },
+    { craft: "booster" },
+  ];
+  // dry black-humor land lines (cigarette / ashtray). Fail stays Boom.
+  const LAND_LINES = [
+    "Stubbed out.",
+    "Still lit.",
+    "Ashtray approved.",
+    "Gravity notices.",
+    "Filter first. Always.",
+    "Ember negotiates.",
+    "Pad accepts liability.",
+    "Not a metaphor.",
+    "Burn rate: settled.",
+    "Ash remembers.",
+    "Soft landing, hard habit.",
+    "Tray > turf.",
+  ];
+  const CLEAR_LINES = [
+    "Three trays. Zero dignity.",
+    "Habit loop complete.",
+    "Ashtray career: peak.",
+  ];
+
   const cfg = {
     thrust: 90,
     maxAngleDeg: 60,       // bottom bank cone half-angle
@@ -232,7 +264,8 @@
     spawnAltitude: 3000,
     camLerp: 6,
     craftScreenFrac: 0.36,
-    // v19: EN UI; single craft (no name); Reset after fail; Landed!/Boom
+    // v20: 3 levels + dry land lines; Reset same level on fail
+    // v19: EN UI; no craft-name; Reset after fail; Landed!/Boom
     // v18: real-count 2D side nozzles — rocket3 / Starship6(2×3) / Booster3-center
     // v17: minimap to bottom (clear top nozzle band)
     // v16: top bank maxAngleDegTop 90° (bottom stays 60°); rect topNozzleCount=2 ends
@@ -257,6 +290,8 @@
   };
 
   let craftType = "rocket";
+  let levelIndex = 0; // 0..2 → Level 1/2/3
+  let runCleared = false; // true after L3 clear (loop prompt)
 
   const ASSET_URLS = {
     craft_butt_slim: "assets/craft_butt_slim.png",
@@ -309,9 +344,23 @@
     }))).then(() => { assetsReady = true; });
   }
 
-  function applyCraftType(type, doReset) {
-    // v19: force single craft (rocket layout); switcher UI/keys disabled
-    const def = CRAFTS.rocket;
+  function pickLandLine() {
+    return LAND_LINES[(Math.random() * LAND_LINES.length) | 0];
+  }
+
+  function pickClearLine() {
+    return CLEAR_LINES[(Math.random() * CLEAR_LINES.length) | 0];
+  }
+
+  function updateLevelHud() {
+    levelLabelEl.textContent = `Level ${levelIndex + 1}/3`;
+  }
+
+  function applyLevel(idx, doReset) {
+    // nozzle layout only — never show craft/brand names
+    levelIndex = Math.max(0, Math.min(LEVELS.length - 1, idx | 0));
+    const key = LEVELS[levelIndex].craft;
+    const def = CRAFTS[key] || CRAFTS.rocket;
     craftType = def.id;
     cfg.bodyW = def.bodyW;
     cfg.bodyH = def.bodyH;
@@ -322,9 +371,7 @@
     cfg.bottomLayout = def.bottomLayout || "span";
     cfg.nozzleRowGap = def.nozzleRowGap != null ? def.nozzleRowGap : 0.10;
     cfg.nozzleCompactFrac = def.nozzleCompactFrac != null ? def.nozzleCompactFrac : 0.42;
-    if (craftRocketBtn) craftRocketBtn.classList.add("active");
-    if (craftRectBtn) craftRectBtn.classList.remove("active");
-    if (craftBoosterBtn) craftBoosterBtn.classList.remove("active");
+    updateLevelHud();
     if (doReset) reset();
   }
 
@@ -336,11 +383,12 @@
     flashEl.style.opacity = "0";
   }
 
-  function showOutcome(kind, text) {
+  function showOutcome(kind, text, nextLabel) {
     outcomeEl.textContent = text;
     outcomeEl.classList.remove("ok", "fail");
     outcomeEl.classList.add("show", kind === "ok" ? "ok" : "fail");
     if (kind === "ok") {
+      againBtn.textContent = nextLabel || "Next";
       againBtn.classList.add("visible");
       resetBtn.classList.remove("visible");
     } else {
@@ -349,11 +397,22 @@
     }
   }
 
+  function onAdvanceOrLoop() {
+    // success path only
+    if (runCleared || levelIndex >= LEVELS.length - 1) {
+      // L3 clear → loop to L1
+      runCleared = false;
+      applyLevel(0, true);
+      return;
+    }
+    applyLevel(levelIndex + 1, true);
+  }
+
   function bindControls() {
+    // fail: Reset same level
     resetBtn.addEventListener("click", (e) => { e.preventDefault(); reset(); });
-    againBtn.addEventListener("click", (e) => { e.preventDefault(); reset(); });
-    // craft switcher kept in DOM but hidden; clicks noop
-    // keep canvas from seeing pointer on the control cluster
+    // success: Next level / Again loop
+    againBtn.addEventListener("click", (e) => { e.preventDefault(); onAdvanceOrLoop(); });
     const box = document.getElementById("controls");
     for (const ev of ["pointerdown", "pointerup", "pointermove", "touchstart", "mousedown", "contextmenu"]) {
       box.addEventListener(ev, (e) => { e.stopPropagation(); }, { capture: true });
@@ -381,6 +440,8 @@
   }
 
   function reset() {
+    // stay on current level (fail retry); layout already applied
+    applyLevel(levelIndex, false);
     craft.x = 0;
     craft.y = world.groundY - cfg.spawnAltitude - cfg.bodyH / 2;
     craft.vx = 0;
@@ -395,11 +456,13 @@
     introElapsed = 0;
     outcomeFlash = 0;
     boomSpawned = false;
+    runCleared = false;
     hideOutcomeButtons();
+    againBtn.textContent = "Next";
     cam.x = craft.x;
     cam.y = craft.y + world.h / 2 - playH * cfg.craftScreenFrac;
     const deg = (craft.angle * 180 / Math.PI).toFixed(0);
-    statEl.textContent = `Intro · tilt ${deg}°`;
+    statEl.textContent = `Intro · L${levelIndex + 1} · tilt ${deg}°`;
   }
 
   function rot(lx, ly, ang) {
@@ -638,9 +701,10 @@
   document.addEventListener("selectstart", (e) => { e.preventDefault(); });
 
   window.addEventListener("keydown", (e) => {
-    // R only after outcome (no always-on reset)
-    if ((e.key === "r" || e.key === "R") && (phase === "crashed" || phase === "landed")) reset();
-    // v19: craft switch keys disabled (single craft)
+    if (e.key !== "r" && e.key !== "R") return;
+    if (phase === "crashed") reset();           // same level
+    else if (phase === "landed") onAdvanceOrLoop();
+    // no craft-switch keys
   });
 
   function applyThrustForces(dt) {
@@ -791,19 +855,26 @@
     craft.omega = 0;
     pointers = [];
     if (soft) {
-      // settle upright-ish
       craft.angle *= 0.35;
       if (Math.abs(craft.angle) < 0.05) craft.angle = 0;
       phase = "landed";
       spawnLandFx();
-      showOutcome("ok", "Landed!");
-      statEl.textContent = "Landed · soft touchdown";
+      const witty = pickLandLine();
+      if (levelIndex >= LEVELS.length - 1) {
+        runCleared = true;
+        const end = pickClearLine();
+        showOutcome("ok", `Landed!\n${witty}\n${end}`, "Again");
+        statEl.textContent = "Cleared · loop ready";
+      } else {
+        showOutcome("ok", `Landed!\n${witty}`, "Next");
+        statEl.textContent = `Landed · L${levelIndex + 1} clear`;
+      }
     } else {
       phase = "crashed";
       spawnBoomFx();
       const why = !onPad ? "missed pad" : (angDeg > cfg.landMaxAngleDeg ? "tip-over" : "hard impact");
       showOutcome("fail", "Boom!");
-      statEl.textContent = `Failed · ${why}`;
+      statEl.textContent = `Failed · L${levelIndex + 1} · ${why}`;
     }
   }
 
@@ -1308,7 +1379,7 @@
 
   bindControls();
   resize();
-  applyCraftType("rocket", false);
+  applyLevel(0, false);
   reset();
   window.addEventListener("resize", () => { resize(); });
   if (window.visualViewport) {

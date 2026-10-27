@@ -1,10 +1,10 @@
 # Thrust Land Proto
 
-Minimal web feel-test: one craft, single-finger thrust, hold-to-steer → soft land.
+Minimal web feel-test: three nozzle layouts, single-finger thrust, hold-to-steer → soft land.
 
-**No Unity / no levels / no ads.** Independent from Sort. Includes cigarette-skin art drop-in.
+**No Unity / no levels-as-campaign / no ads.** Independent from Sort. Cigarette-skin art drop-in.
 
-Current version: **v19**
+Current version: **v20**
 
 ## Play
 
@@ -12,30 +12,25 @@ Current version: **v19**
 - Local: open `index.html` in a browser
 - Mirror: https://raw.githack.com/ninja9998877/thrust-land-proto/main/index.html
 
-## v19 highlights
+## v20 highlights
 
-- **English UI** throughout (HUD, status, hints, outcomes)
-- **Single craft** only (Falcon-layout nozzles: bottom 3 + top 2 corners). Craft switcher and 1/2/3 keys removed/hidden. **No craft-name label** in UI.
-- **Reset not always-on**: hidden during flight; **Reset (R)** appears only after a crash. Success shows **Again**.
-- **Outcomes**: soft land on pad (speed / tilt / pad gates) → green flash + **Landed!**; hard impact / tip-over / miss pad → boom particles + **Boom!**
-- Fuel empty still allows free-fall; miracle soft land counts as success
-- Keeps v18 nozzle counts, cigarette skin, bottom minimap
+- **3 levels** (HUD `Level 1/3`… — numbers only, **no craft/brand names**):
+  - **L1**: bottom 3 + top 2 corner nozzles
+  - **L2**: bottom 6, no top
+  - **L3**: bottom 3 compact-center, no top (more stable than span-without-top)
+- Soft land → dry black-humor English line + **Next** (L3 clear → short end line + **Again** loops to L1)
+- Crash → **Boom!** + **Reset** retries **same level**
+- English UI; Reset not always-on; cigarette skin + bottom minimap kept
 
 ## Controls
 
 | Input | Action |
 |------|--------|
-| Hold + drag | Finger below craft → bottom nozzles; above → top; drag to aim |
-| Left mouse drag | Same (right button ignored) |
-| Reset / Again / `R` | Only after outcome — restart from ~3000 m with random tilt |
-
-Orange line = bottom exhaust, cyan = top; ember/ash FX overlay. Bottom minimap: green cross = pad (ashtray), yellow triangle = craft.
+| Hold + drag | Below craft → bottom nozzles; above → top (if any); drag to aim |
+| Reset / `R` | After crash — retry current level |
+| Next / Again / `R` | After land — next level, or loop to L1 after clear |
 
 ## Files
 
-- `index.html` — single-page (Canvas 2D + simple rigid body), no build
-- `assets/` — cigarette skin PNGs (craft / ashtray pad / intro hand / FX)
-
-## Success bar
-
-Opens playable; soft/hard landing feedback works; no Chinese UI leftovers; no always-on Reset.
+- `index.html` — single-page Canvas 2D proto
+- `assets/` — cigarette skin PNGs
