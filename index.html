@@ -69,11 +69,35 @@
     font-size: 10px; text-align: center; color: #9eb6dc;
     background: #0a1220cc; padding: 2px 0; letter-spacing: 0.02em;
   }
+  #controls {
+    position: fixed; right: 12px; top: 148px; z-index: 3;
+    width: 128px;
+    display: flex; flex-direction: column; gap: 6px;
+    pointer-events: auto;
+  }
+  #controls .craftRow { display: flex; gap: 4px; }
+  #controls button {
+    flex: 1; padding: 7px 4px; border-radius: 8px;
+    border: 1px solid #456; background: #162033; color: #b8c8e0;
+    font-size: 11px; cursor: pointer;
+    -webkit-user-select: none; user-select: none;
+    -webkit-touch-callout: none;
+    touch-action: manipulation;
+  }
+  #controls button.active {
+    border-color: #6eb6ff; background: #1e3a5c; color: #e8f2ff; font-weight: 600;
+  }
+  #controls button:hover { background: #243656; }
+  #controls #resetBtn {
+    flex: none; width: 100%;
+    border-color: #4a6; background: #1a3a28; color: #dfffe8;
+  }
+  #controls #resetBtn:hover { background: #234e35; }
 </style>
 </head>
 <body>
 <div id="hud">
-  <span><b>Thrust Land</b> · 手感原型 <b>v12</b></span>
+  <span><b>Thrust Land</b> · 手感原型 <b>v13</b></span>
   <span id="craftLabel">机体 方块排喷</span>
   <span id="alt">高度 — m</span>
   <span id="fuel">燃料 —</span>
@@ -83,7 +107,14 @@
   <canvas id="mm" width="128" height="128"></canvas>
   <div class="cap">地面 · 落点</div>
 </div>
-<div id="hint">单指按住拖动喷气 · 键 <b>1</b>/<b>2</b> 切换机体（会复位）· 燃料有限 · 第二指忽略 · R 复位 · 右上小地图对准落点 · 开局约 3000 m 随机倾角</div>
+<div id="controls" aria-label="机体与复位">
+  <div class="craftRow">
+    <button type="button" id="craftRect" class="active">方块·多喷口</button>
+    <button type="button" id="craftRocket">细长·单喷口</button>
+  </div>
+  <button id="resetBtn" type="button">重置 (R)</button>
+</div>
+<div id="hint">单指按住拖动喷气 · 右上「方块·多喷口 / 细长·单喷口」切换（会复位）· 键 <b>1</b>/<b>2</b>/<b>R</b> · 燃料有限 · 第二指忽略 · 小地图对准落点 · 开局约 3000 m 随机倾角</div>
 <canvas id="c"></canvas>
 <script>
 (() => {
@@ -97,6 +128,9 @@
   const altEl = document.getElementById("alt");
   const fuelEl = document.getElementById("fuel");
   const craftLabelEl = document.getElementById("craftLabel");
+  const craftRectBtn = document.getElementById("craftRect");
+  const craftRocketBtn = document.getElementById("craftRocket");
+  const resetBtn = document.getElementById("resetBtn");
 
   // World units: 1 unit ≈ 1 m. +Y is down (canvas-like). Ground at y = 0.
   const CRAFTS = {
@@ -138,6 +172,7 @@
     spawnAltitude: 3000,
     camLerp: 6,
     craftScreenFrac: 0.36,
+    // v13: restore on-screen craft switch + reset buttons (no params sliders)
     // v12: free-fall accel along body long axis (tilt → diagonal fall);
     // restore v10 screen-space thrust aim (not v11 body-axis+gimbal as main)
     // keep v7–v10: single finger, no cooldown, screen coords, simple sky, streaks,
@@ -176,7 +211,20 @@
     cfg.nozzleMarginX = def.nozzleMarginX;
     cfg.nozzleY = def.nozzleY;
     craftLabelEl.textContent = "机体 " + def.label;
+    craftRectBtn.classList.toggle("active", craftType === "rect");
+    craftRocketBtn.classList.toggle("active", craftType === "rocket");
     if (doReset) reset();
+  }
+
+  function bindControls() {
+    resetBtn.addEventListener("click", (e) => { e.preventDefault(); reset(); });
+    craftRectBtn.addEventListener("click", (e) => { e.preventDefault(); applyCraftType("rect", true); });
+    craftRocketBtn.addEventListener("click", (e) => { e.preventDefault(); applyCraftType("rocket", true); });
+    // keep canvas from seeing pointer on the control cluster
+    const box = document.getElementById("controls");
+    for (const ev of ["pointerdown", "pointerup", "pointermove", "touchstart", "mousedown", "contextmenu"]) {
+      box.addEventListener(ev, (e) => { e.stopPropagation(); }, { capture: true });
+    }
   }
 
   function resize() {
@@ -891,6 +939,7 @@
     requestAnimationFrame(frame);
   }
 
+  bindControls();
   resize();
   applyCraftType("rect", false);
   reset();
