@@ -1,57 +1,41 @@
 # Thrust Land Proto
 
-纯网页最小玩法验证：可切换机体（猎鹰·3 / 星舰·6 / 助推·3中心）+ 单指喷气，验证「按住调姿 → 落地」手感。
+Minimal web feel-test: one craft, single-finger thrust, hold-to-steer → soft land.
 
-**无 Unity / 无关卡 / 无广告。** 与 Sort 工程完全独立。现含烟头皮美术 drop-in。
+**No Unity / no levels / no ads.** Independent from Sort. Includes cigarette-skin art drop-in.
 
-当前版本：**v18**
+Current version: **v19**
 
-## 可玩
+## Play
 
-- **GitHub Pages**：https://ninja9998877.github.io/thrust-land-proto/
-- 本地：浏览器直接打开 `index.html`
-- 备用：https://raw.githack.com/ninja9998877/thrust-land-proto/main/index.html
+- **GitHub Pages**: https://ninja9998877.github.io/thrust-land-proto/
+- Local: open `index.html` in a browser
+- Mirror: https://raw.githack.com/ninja9998877/thrust-land-proto/main/index.html
 
-## v18 要点
+## v19 highlights
 
-- **真机数量 2D 侧面喷口**（不做完整 3D 数量），方向与真机一致：
-  - **猎鹰·3**（slim 烟头）：着陆侧底喷 **3**＝中心1+侧2，万向底喷锥≤60°；顶喷两边角≤90°
-  - **星舰·6**（stub 烟头）：着陆猛禽 **6**＝机腹 3×2 侧视投影（2 行×3）；顶喷 0
-  - **助推·3中心**：着陆 **3** 紧凑中心排列；顶喷 0
-- 烟头皮隐喻沿用；姿态下落 / 底喷万向手感不回退
-- 键 `1`/`2`/`3`/`R` 切机体与重置
+- **English UI** throughout (HUD, status, hints, outcomes)
+- **Single craft** only (Falcon-layout nozzles: bottom 3 + top 2 corners). Craft switcher and 1/2/3 keys removed/hidden. **No craft-name label** in UI.
+- **Reset not always-on**: hidden during flight; **Reset (R)** appears only after a crash. Success shows **Again**.
+- **Outcomes**: soft land on pad (speed / tilt / pad gates) → green flash + **Landed!**; hard impact / tip-over / miss pad → boom particles + **Boom!**
+- Fuel empty still allows free-fall; miracle soft land counts as success
+- Keeps v18 nozzle counts, cigarette skin, bottom minimap
 
-## v17 要点
+## Controls
 
-- **小地图下移**：离开顶部（避免挡顶喷操作），放到原底部说明区；长文案 hint 去掉（地图角标保留极短提示）
-- 右上仅保留切换机体 / 重置；顶喷触控带清爽
-- 继承 v16：侧视烟灰缸底对齐、像素开场手、顶喷只两边角≤90°
+| Input | Action |
+|------|--------|
+| Hold + drag | Finger below craft → bottom nozzles; above → top; drag to aim |
+| Left mouse drag | Same (right button ignored) |
+| Reset / Again / `R` | Only after outcome — restart from ~3000 m with random tilt |
 
-## v15 要点
+Orange line = bottom exhaust, cyan = top; ember/ash FX overlay. Bottom minimap: green cross = pad (ashtray), yellow triangle = craft.
 
-- **烟头皮**：细长=`craft_butt_slim`、方块=`craft_butt_stub`（滤嘴=鼻尖朝上）；落点=`pad_ashtray`（绿十字已烘焙）
-- **开场手弹**：`intro_hand_00→01→02`（约 220ms/帧）播完再下落；只手不标上帝
-- 喷气保留橙色/青色线，并叠加 `fx_ember` / 偶发 `fx_ash_puff`
-- 资源：`assets/*.png`
+## Files
 
-## 操作
+- `index.html` — single-page (Canvas 2D + simple rigid body), no build
+- `assets/` — cigarette skin PNGs (craft / ashtray pad / intro hand / FX)
 
-| 输入 | 作用 |
-|------|------|
-| 单指按住并拖动 | 指在机体下方→底喷口；上方→顶喷口（有顶喷时）；拖动瞄准 |
-| 鼠标左键拖动 | 同上（右键无效） |
-| 右上切换按钮 | 「猎鹰·3 / 星舰·6 / 助推·3中心」并复位 |
-| 右上「重置 (R)」 | 回到约 3000 m、随机倾角、燃料加满 |
-| `1` / `2` / `3` | 猎鹰 / 星舰 / 助推器 |
-| `R` | 重置 |
+## Success bar
 
-橙色线=底喷排气，青色线=顶喷排气；火星/烟灰粒子叠加。底部小地图：绿十字=落点（烟灰缸），黄三角=机体。
-
-## 文件
-
-- `index.html` — 单页自含（Canvas 2D + 简易刚体），无构建、无依赖
-- `assets/` — 烟头皮 PNG（机体 / 烟灰缸落点 / 开场手 / 火星 FX）
-
-## 成功标准
-
-打开即可玩；三机体喷口数符合真机 2D 口径；指侧选喷口银行；自由落体带随机倾角且沿姿态斜落；燃料条随喷气下降；落地镜头连贯；小地图可对落点。
+Opens playable; soft/hard landing feedback works; no Chinese UI leftovers; no always-on Reset.

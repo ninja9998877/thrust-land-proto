@@ -1,15 +1,15 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-<title>Thrust Land Proto — 按住调姿→落地</title>
+<title>Thrust Land Proto — hold to steer, land soft</title>
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body {
     width: 100%; height: 100%; overflow: hidden; background: #0b1020;
-    font-family: ui-sans-serif, system-ui, "PingFang SC", "Noto Sans SC", sans-serif; color: #e8eefc;
+    font-family: ui-sans-serif, system-ui, sans-serif; color: #e8eefc;
     -webkit-user-select: none; user-select: none;
     -webkit-touch-callout: none;
   }
@@ -89,27 +89,62 @@
     border-color: #4a6; background: #1a3a28; color: #dfffe8;
   }
   #controls #resetBtn:hover { background: #234e35; }
+  #controls .craftRow { display: none; } /* v19: single craft; no craft-name UI */
+  #controls #resetBtn {
+    display: none; /* shown only after crash / success again */
+  }
+  #controls #resetBtn.visible { display: block; }
+  #controls #againBtn {
+    display: none; flex: none; width: 100%;
+    border-color: #4a8ac4; background: #1a2e4a; color: #dff0ff;
+  }
+  #controls #againBtn:hover { background: #243e5c; }
+  #controls #againBtn.visible { display: block; }
+  #outcome {
+    position: fixed; left: 50%; top: 22%; transform: translateX(-50%);
+    z-index: 4; pointer-events: none;
+    padding: 10px 22px; border-radius: 12px;
+    font-size: 22px; font-weight: 700; letter-spacing: 0.04em;
+    text-shadow: 0 2px 8px #000a;
+    opacity: 0; transition: opacity 0.15s ease;
+  }
+  #outcome.show { opacity: 1; }
+  #outcome.ok {
+    color: #b8ffc8; background: #143a2288; border: 1px solid #5fd98f88;
+    box-shadow: 0 0 28px #3dff7a55;
+  }
+  #outcome.fail {
+    color: #ffd0a8; background: #3a141488; border: 1px solid #ff884488;
+    box-shadow: 0 0 32px #ff552255;
+  }
+  #flash {
+    position: fixed; inset: 0; z-index: 3; pointer-events: none;
+    opacity: 0; background: #fff;
+  }
 </style>
 </head>
 <body>
 <div id="hud">
-  <span><b>Thrust Land</b> · 手感原型 <b>v18</b></span>
-  <span id="craftLabel">机体 星舰·6着陆</span>
-  <span id="alt">高度 — m</span>
-  <span id="fuel">燃料 —</span>
-  <span id="stat">就绪</span>
+  <span><b>Thrust Land</b> · feel proto <b>v19</b></span>
+  <span id="alt">Alt — m</span>
+  <span id="fuel">Fuel —</span>
+  <span id="stat">Ready</span>
 </div>
-<div id="controls" aria-label="机体与复位">
+<div id="controls" aria-label="Reset">
   <div class="craftRow">
-    <button type="button" id="craftRocket">猎鹰·3</button>
-    <button type="button" id="craftRect" class="active">星舰·6</button>
-    <button type="button" id="craftBooster">助推·3中心</button>
+    <!-- v19: craft switcher hidden; single rocket layout; no craft-name UI -->
+    <button type="button" id="craftRocket" class="active">A</button>
+    <button type="button" id="craftRect">B</button>
+    <button type="button" id="craftBooster">C</button>
   </div>
-  <button id="resetBtn" type="button">重置 (R)</button>
+  <button id="againBtn" type="button">Again</button>
+  <button id="resetBtn" type="button">Reset (R)</button>
 </div>
-<div id="minimap" aria-label="地面小地图">
+<div id="outcome" aria-live="polite"></div>
+<div id="flash"></div>
+<div id="minimap" aria-label="Ground minimap">
   <canvas id="mm" width="128" height="128"></canvas>
-  <div class="cap">地面 · 落点 · 1/2/3/R</div>
+  <div class="cap">Ground · Pad · R after fail</div>
 </div>
 <canvas id="c"></canvas>
 <script>
@@ -123,45 +158,47 @@
   const statEl = document.getElementById("stat");
   const altEl = document.getElementById("alt");
   const fuelEl = document.getElementById("fuel");
-  const craftLabelEl = document.getElementById("craftLabel");
   const craftRectBtn = document.getElementById("craftRect");
   const craftRocketBtn = document.getElementById("craftRocket");
   const craftBoosterBtn = document.getElementById("craftBooster");
   const resetBtn = document.getElementById("resetBtn");
+  const againBtn = document.getElementById("againBtn");
+  const outcomeEl = document.getElementById("outcome");
+  const flashEl = document.getElementById("flash");
 
   // World units: 1 unit ≈ 1 m. +Y is down (canvas-like). Ground at y = 0.
   const CRAFTS = {
-    // 猎鹰级 → slim 烟头：着陆侧 3（中心+侧2，万向底喷锥）
+    // v19: single playable craft (Falcon-layout nozzles); NO craft-name shown in UI
+    // landing side 3 (center+side2, gimbal bottom cone) + top 2 corner nozzles ≤90°
     rocket: {
       id: "rocket",
-      label: "猎鹰·3着陆",
+      label: "", // unused — craft name UI removed
       bodyW: 28,
       bodyH: 120,
       nozzleCount: 3,
-      topNozzleCount: 2,   // 两边角，≤90°
+      topNozzleCount: 2,   // corner pair, ≤90°
       bottomLayout: "span",
       nozzleMarginX: 4,
       nozzleY: 0.48,
       shape: "rocket",
     },
-    // 星舰飞船侧 → stub 烟头：机腹 3×2 侧视投影 = 2 行×3
+    // kept in data for reference; UI switcher hidden in v19
     rect: {
       id: "rect",
-      label: "星舰·6着陆",
+      label: "",
       bodyW: 56,
       bodyH: 96,
       nozzleCount: 6,
-      topNozzleCount: 0,   // 不抢 6 着陆表现
+      topNozzleCount: 0,
       bottomLayout: "grid2x3",
       nozzleMarginX: 8,
       nozzleY: 0.48,
       nozzleRowGap: 0.10,
       shape: "rect",
     },
-    // 助推器侧：着陆 3 紧凑中心；顶喷无
     booster: {
       id: "booster",
-      label: "助推器·3中心",
+      label: "",
       bodyW: 40,
       bodyH: 130,
       nozzleCount: 3,
@@ -183,19 +220,20 @@
     angularDrag: 8,
     torqueCoef: 0.011,
     omegaCap: 2.2,
-    bodyW: CRAFTS.rect.bodyW,
-    bodyH: CRAFTS.rect.bodyH,
-    nozzleCount: CRAFTS.rect.nozzleCount,
-    topNozzleCount: CRAFTS.rect.topNozzleCount,
-    nozzleMarginX: CRAFTS.rect.nozzleMarginX,
-    nozzleY: CRAFTS.rect.nozzleY,
-    bottomLayout: CRAFTS.rect.bottomLayout,
-    nozzleRowGap: CRAFTS.rect.nozzleRowGap || 0.10,
+    bodyW: CRAFTS.rocket.bodyW,
+    bodyH: CRAFTS.rocket.bodyH,
+    nozzleCount: CRAFTS.rocket.nozzleCount,
+    topNozzleCount: CRAFTS.rocket.topNozzleCount,
+    nozzleMarginX: CRAFTS.rocket.nozzleMarginX,
+    nozzleY: CRAFTS.rocket.nozzleY,
+    bottomLayout: CRAFTS.rocket.bottomLayout,
+    nozzleRowGap: CRAFTS.rocket.nozzleRowGap || 0.10,
     nozzleCompactFrac: 0.42,
     spawnAltitude: 3000,
     camLerp: 6,
     craftScreenFrac: 0.36,
-    // v18: real-count 2D side nozzles — Falcon3 / Starship6(2×3) / Booster3-center
+    // v19: EN UI; single craft (no name); Reset after fail; Landed!/Boom
+    // v18: real-count 2D side nozzles — rocket3 / Starship6(2×3) / Booster3-center
     // v17: minimap to bottom (clear top nozzle band)
     // v16: top bank maxAngleDegTop 90° (bottom stays 60°); rect topNozzleCount=2 ends
     // v15: cigarette skin sprites + intro hand + ashtray pad
@@ -212,9 +250,13 @@
     padX: 0,
     padHalfW: 90,
     minimapRange: 420,
+    // soft-land gates (proto feel)
+    landMaxSpeed: 48,
+    landMaxAngleDeg: 18,
+    landMaxVy: 38,
   };
 
-  let craftType = "rect";
+  let craftType = "rocket";
 
   const ASSET_URLS = {
     craft_butt_slim: "assets/craft_butt_slim.png",
@@ -233,9 +275,11 @@
   // intro: hand flick frames before free-fall (hand only, no god label)
   const INTRO_FRAME_MS = 220;
   const INTRO_KEYS = ["intro_hand_00", "intro_hand_01", "intro_hand_02"];
-  let phase = "intro"; // "intro" | "play"
+  let phase = "intro"; // "intro" | "play" | "landed" | "crashed"
   let introFrame = 0;
   let introElapsed = 0;
+  let outcomeFlash = 0; // seconds of screen flash remaining
+  let boomSpawned = false;
   /** @type {{x:number,y:number,vx:number,vy:number,life:number,max:number,size:number,rot:number,kind:string}[]} */
   let fxParts = [];
 
@@ -266,7 +310,8 @@
   }
 
   function applyCraftType(type, doReset) {
-    const def = CRAFTS[type] || CRAFTS.rect;
+    // v19: force single craft (rocket layout); switcher UI/keys disabled
+    const def = CRAFTS.rocket;
     craftType = def.id;
     cfg.bodyW = def.bodyW;
     cfg.bodyH = def.bodyH;
@@ -277,18 +322,37 @@
     cfg.bottomLayout = def.bottomLayout || "span";
     cfg.nozzleRowGap = def.nozzleRowGap != null ? def.nozzleRowGap : 0.10;
     cfg.nozzleCompactFrac = def.nozzleCompactFrac != null ? def.nozzleCompactFrac : 0.42;
-    craftLabelEl.textContent = "机体 " + def.label;
-    craftRectBtn.classList.toggle("active", craftType === "rect");
-    craftRocketBtn.classList.toggle("active", craftType === "rocket");
-    craftBoosterBtn.classList.toggle("active", craftType === "booster");
+    if (craftRocketBtn) craftRocketBtn.classList.add("active");
+    if (craftRectBtn) craftRectBtn.classList.remove("active");
+    if (craftBoosterBtn) craftBoosterBtn.classList.remove("active");
     if (doReset) reset();
+  }
+
+  function hideOutcomeButtons() {
+    resetBtn.classList.remove("visible");
+    againBtn.classList.remove("visible");
+    outcomeEl.classList.remove("show", "ok", "fail");
+    outcomeEl.textContent = "";
+    flashEl.style.opacity = "0";
+  }
+
+  function showOutcome(kind, text) {
+    outcomeEl.textContent = text;
+    outcomeEl.classList.remove("ok", "fail");
+    outcomeEl.classList.add("show", kind === "ok" ? "ok" : "fail");
+    if (kind === "ok") {
+      againBtn.classList.add("visible");
+      resetBtn.classList.remove("visible");
+    } else {
+      resetBtn.classList.add("visible");
+      againBtn.classList.remove("visible");
+    }
   }
 
   function bindControls() {
     resetBtn.addEventListener("click", (e) => { e.preventDefault(); reset(); });
-    craftRectBtn.addEventListener("click", (e) => { e.preventDefault(); applyCraftType("rect", true); });
-    craftRocketBtn.addEventListener("click", (e) => { e.preventDefault(); applyCraftType("rocket", true); });
-    craftBoosterBtn.addEventListener("click", (e) => { e.preventDefault(); applyCraftType("booster", true); });
+    againBtn.addEventListener("click", (e) => { e.preventDefault(); reset(); });
+    // craft switcher kept in DOM but hidden; clicks noop
     // keep canvas from seeing pointer on the control cluster
     const box = document.getElementById("controls");
     for (const ev of ["pointerdown", "pointerup", "pointermove", "touchstart", "mousedown", "contextmenu"]) {
@@ -329,11 +393,13 @@
     phase = "intro";
     introFrame = 0;
     introElapsed = 0;
+    outcomeFlash = 0;
+    boomSpawned = false;
+    hideOutcomeButtons();
     cam.x = craft.x;
     cam.y = craft.y + world.h / 2 - playH * cfg.craftScreenFrac;
     const deg = (craft.angle * 180 / Math.PI).toFixed(0);
-    const name = (CRAFTS[craftType] || CRAFTS.rect).label;
-    statEl.textContent = `开场 · ${name} · 倾角 ${deg}°`;
+    statEl.textContent = `Intro · tilt ${deg}°`;
   }
 
   function rot(lx, ly, ang) {
@@ -531,6 +597,7 @@
 
   canvas.addEventListener("pointerdown", (e) => {
     // v7: single finger / left mouse only; ignore 2nd finger & right button
+    if (phase !== "play") return;
     if (e.pointerType === "mouse" && e.button !== 0) return;
     if (pointers.length >= 1) return;
     canvas.setPointerCapture(e.pointerId);
@@ -571,10 +638,9 @@
   document.addEventListener("selectstart", (e) => { e.preventDefault(); });
 
   window.addEventListener("keydown", (e) => {
-    if (e.key === "r" || e.key === "R") reset();
-    if (e.key === "1") applyCraftType("rocket", true);
-    if (e.key === "2") applyCraftType("rect", true);
-    if (e.key === "3") applyCraftType("booster", true);
+    // R only after outcome (no always-on reset)
+    if ((e.key === "r" || e.key === "R") && (phase === "crashed" || phase === "landed")) reset();
+    // v19: craft switch keys disabled (single craft)
   });
 
   function applyThrustForces(dt) {
@@ -645,6 +711,8 @@
     if (craft.x < -bound) { craft.x = -bound; craft.vx *= -0.3; }
     if (craft.x > bound) { craft.x = bound; craft.vx *= -0.3; }
 
+    if (phase !== "play") return;
+
     const halfW = cfg.bodyW / 2, halfH = cfg.bodyH / 2;
     const corners = [
       rot(-halfW, -halfH, craft.angle),
@@ -660,16 +728,82 @@
     }
     if (maxPen > 0) {
       craft.y -= maxPen;
-      if (craft.vy > 0) craft.vy *= -0.25;
-      craft.vx *= 0.85;
-      if (Math.abs(craft.vy) < 12 && Math.abs(craft.omega) < 1.2) {
-        craft.vy = 0;
-        craft.omega *= 0.5;
-        craft.angle *= 0.85;
-        if (Math.abs(craft.angle) < 0.03) craft.angle = 0;
-      } else {
-        craft.omega += -craft.angle * 2.5 * dt;
-      }
+      resolveTouchdown();
+    }
+  }
+
+  function spawnBoomFx() {
+    if (boomSpawned) return;
+    boomSpawned = true;
+    const cx = craft.x, cy = world.groundY - 8;
+    for (let i = 0; i < 28; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const sp = 60 + Math.random() * 160;
+      fxParts.push({
+        x: cx + (Math.random() - 0.5) * 20,
+        y: cy + (Math.random() - 0.5) * 10,
+        vx: Math.cos(a) * sp,
+        vy: Math.sin(a) * sp * 0.55 - 40,
+        life: 0.45 + Math.random() * 0.45,
+        max: 0.9,
+        size: 16 + Math.random() * 28,
+        rot: Math.random() * Math.PI * 2,
+        kind: Math.random() < 0.35 ? "puff" : "ember",
+      });
+    }
+    outcomeFlash = 0.22;
+  }
+
+  function spawnLandFx() {
+    const cx = craft.x, cy = world.groundY - 4;
+    for (let i = 0; i < 10; i++) {
+      const a = -Math.PI / 2 + (Math.random() - 0.5) * 1.2;
+      const sp = 20 + Math.random() * 40;
+      fxParts.push({
+        x: cx + (Math.random() - 0.5) * 24,
+        y: cy,
+        vx: Math.cos(a) * sp * 0.4,
+        vy: Math.sin(a) * sp,
+        life: 0.35 + Math.random() * 0.25,
+        max: 0.6,
+        size: 12 + Math.random() * 14,
+        rot: Math.random() * Math.PI * 2,
+        kind: "puff",
+      });
+    }
+    outcomeFlash = 0.12;
+  }
+
+  function resolveTouchdown() {
+    if (phase !== "play") return;
+    const spd = Math.hypot(craft.vx, craft.vy);
+    const angDeg = Math.abs(craft.angle * 180 / Math.PI);
+    const onPad = Math.abs(craft.x - cfg.padX) <= cfg.padHalfW + cfg.bodyW * 0.25;
+    const soft = (
+      spd <= cfg.landMaxSpeed &&
+      Math.abs(craft.vy) <= cfg.landMaxVy &&
+      angDeg <= cfg.landMaxAngleDeg &&
+      onPad
+    );
+    // freeze motion
+    craft.vx = 0;
+    craft.vy = 0;
+    craft.omega = 0;
+    pointers = [];
+    if (soft) {
+      // settle upright-ish
+      craft.angle *= 0.35;
+      if (Math.abs(craft.angle) < 0.05) craft.angle = 0;
+      phase = "landed";
+      spawnLandFx();
+      showOutcome("ok", "Landed!");
+      statEl.textContent = "Landed · soft touchdown";
+    } else {
+      phase = "crashed";
+      spawnBoomFx();
+      const why = !onPad ? "missed pad" : (angDeg > cfg.landMaxAngleDeg ? "tip-over" : "hard impact");
+      showOutcome("fail", "Boom!");
+      statEl.textContent = `Failed · ${why}`;
     }
   }
 
@@ -859,7 +993,7 @@
     const halfW = cfg.bodyW / 2, halfH = cfg.bodyH / 2;
     const shape = (CRAFTS[craftType] || CRAFTS.rect).shape;
     // filter tip = nose (up / -Y); burning end = tail (+Y)
-    // slim=猎鹰/助推器感；stub=星舰感
+    // slim skin for rocket; stub kept for unused craft defs
     const skinKey = (shape === "rocket" || shape === "booster") ? "craft_butt_slim" : "craft_butt_stub";
     const skin = assets[skinKey];
     if (skin && skin.complete && skin.naturalWidth) {
@@ -985,7 +1119,7 @@
     ctx.fillStyle = "#c9d4eecc";
     ctx.font = "13px ui-sans-serif, system-ui, sans-serif";
     ctx.textAlign = "center";
-    ctx.fillText("弹一下…", cx, Math.min(playH - 18, cy + size / 2 + 28));
+    ctx.fillText("Flick…", cx, Math.min(playH - 18, cy + size / 2 + 28));
     drawMinimap();
   }
 
@@ -1096,12 +1230,42 @@
     ctx.fillStyle = "#9eb6dccc";
     ctx.font = "12px ui-sans-serif, system-ui, sans-serif";
     ctx.textAlign = "center";
-    ctx.fillText("喷气区 · 下方喷底 / 上方喷顶 · 单指拖动（全屏亦可）", world.w / 2, playH + 22);
+    ctx.fillText("Thrust zone · below=bottom / above=top · drag (fullscreen ok)", world.w / 2, playH + 22);
 
     drawMinimap();
   }
 
   let last = performance.now();
+  function updateHudFlight() {
+    const alt = Math.max(0, altitude());
+    const spd = Math.hypot(craft.vx, craft.vy);
+    const deg = (craft.angle * 180 / Math.PI).toFixed(0);
+    const fuelPct = Math.max(0, Math.min(100, fuel));
+    altEl.textContent = `Alt ${alt.toFixed(0)} m`;
+    fuelEl.classList.toggle("low", fuelPct <= 25);
+    fuelEl.innerHTML = `Fuel ${fuelPct.toFixed(0)}%<span class="bar"><i style="transform:scaleX(${(fuelPct / 100).toFixed(3)})"></i></span>`;
+    if (phase === "play") {
+      const firingN = pointers.filter(p => p.nozzle != null && (p.fx || p.fy)).length;
+      const boundN = pointers.filter(p => p.nozzle != null).length;
+      let status = `Jets ${firingN}/${boundN}/${totalNozzles()} · tilt ${deg}° · spd ${spd.toFixed(0)}`;
+      if (fuel <= 0) status += " · fuel out";
+      else status += ` · bank bot≤${cfg.maxAngleDeg}°/top≤${cfg.maxAngleDegTop}°`;
+      statEl.textContent = status;
+    }
+  }
+
+  function updateFlash(dt) {
+    if (outcomeFlash > 0) {
+      outcomeFlash = Math.max(0, outcomeFlash - dt);
+      const t = outcomeFlash / 0.22;
+      const isFail = phase === "crashed";
+      flashEl.style.background = isFail ? "#ff8844" : "#a8ffc0";
+      flashEl.style.opacity = String(Math.min(0.55, t * (isFail ? 0.55 : 0.35)));
+    } else if (flashEl.style.opacity !== "0") {
+      flashEl.style.opacity = "0";
+    }
+  }
+
   function frame(now) {
     let dt = (now - last) / 1000;
     last = now;
@@ -1116,43 +1280,35 @@
       if (introFrame >= INTRO_KEYS.length - 1 && introElapsed >= INTRO_FRAME_MS) {
         phase = "play";
         const deg = (craft.angle * 180 / Math.PI).toFixed(0);
-        const name = (CRAFTS[craftType] || CRAFTS.rect).label;
-        statEl.textContent = `下落 · ${name} · 倾角 ${deg}° · 燃料满`;
+        statEl.textContent = `Falling · tilt ${deg}° · fuel full`;
       }
       drawIntro();
       requestAnimationFrame(frame);
       return;
     }
 
-    const steps = 2;
-    const h = dt / steps;
-    for (let s = 0; s < steps; s++) {
-      applyThrustForces(h);
-      integrate(h);
+    if (phase === "play") {
+      const steps = 2;
+      const h = dt / steps;
+      for (let s = 0; s < steps; s++) {
+        applyThrustForces(h);
+        integrate(h);
+      }
+    } else {
+      // landed / crashed: no thrust, keep particles + cam
+      pointers = [];
     }
     updateCamera(dt);
     updateFx(dt);
-
-    const alt = Math.max(0, altitude());
-    const spd = Math.hypot(craft.vx, craft.vy);
-    const deg = (craft.angle * 180 / Math.PI).toFixed(0);
-    const fuelPct = Math.max(0, Math.min(100, fuel));
-    altEl.textContent = `高度 ${alt.toFixed(0)} m`;
-    fuelEl.classList.toggle("low", fuelPct <= 25);
-    fuelEl.innerHTML = `燃料 ${fuelPct.toFixed(0)}%<span class="bar"><i style="transform:scaleX(${(fuelPct / 100).toFixed(3)})"></i></span>`;
-    const firingN = pointers.filter(p => p.nozzle != null && (p.fx || p.fy)).length;
-    const boundN = pointers.filter(p => p.nozzle != null).length;
-    let status = `喷 ${firingN}/${boundN}/${totalNozzles()} · 倾角 ${deg}° · 速 ${spd.toFixed(0)}`;
-    if (fuel <= 0) status += " · 燃料耗尽";
-    else status += ` · 偏角 底≤${cfg.maxAngleDeg}°/顶≤${cfg.maxAngleDegTop}°`;
-    statEl.textContent = status;
+    updateFlash(dt);
+    updateHudFlight();
     draw();
     requestAnimationFrame(frame);
   }
 
   bindControls();
   resize();
-  applyCraftType("rect", false);
+  applyCraftType("rocket", false);
   reset();
   window.addEventListener("resize", () => { resize(); });
   if (window.visualViewport) {
