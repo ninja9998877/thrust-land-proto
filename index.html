@@ -87,7 +87,7 @@
 </head>
 <body>
 <div id="hud">
-  <span><b>Thrust Land</b> · 手感原型 <b>v8</b></span>
+  <span><b>Thrust Land</b> · 手感原型 <b>v9</b></span>
   <span id="craftLabel">机体 方块排喷</span>
   <span id="alt">高度 — m</span>
   <span id="fuel">燃料 —</span>
@@ -160,7 +160,7 @@
     spawnAltitude: 3000,
     camLerp: 6,
     craftScreenFrac: 0.36,
-    // v8: + no user-select / touch-callout on canvas; fuel + single finger; craft switch
+    // v9: screen-space thrust aim; simple sky bg; speed streaks; keep v7/v8 controls
     fuelMax: 100,
     fuelBurnPerSec: 7.5,
     spawnTiltMinDeg: 15,
@@ -180,7 +180,7 @@
 
   let fuel = cfg.fuelMax;
 
-  /** @type {{id:string,x:number,y:number,active:boolean,nx:number,ny:number,fx:number,fy:number,flameX:number,flameY:number,nozzle:number|null,button?:number}[]} */
+  /** @type {{id:string,sx:number,sy:number,x:number,y:number,active:boolean,nx:number,ny:number,fx:number,fy:number,flameX:number,flameY:number,nozzle:number|null,button?:number}[]} */
   let pointers = [];
 
   function applyCraftType(type, doReset) {
@@ -314,14 +314,31 @@
     };
   }
 
-  function screenToWorld(clientX, clientY) {
+  /** Canvas CSS-pixel coords from client (independent of camera / world fall). */
+  function clientToScreen(clientX, clientY) {
     const rect = canvas.getBoundingClientRect();
-    const sx = (clientX - rect.left) * (world.w / rect.width);
-    const sy = (clientY - rect.top) * (world.h / rect.height);
+    return {
+      sx: (clientX - rect.left) * (world.w / rect.width),
+      sy: (clientY - rect.top) * (world.h / rect.height),
+    };
+  }
+
+  /** Screen → world using *current* camera (must refresh every frame while held). */
+  function screenToWorld(sx, sy) {
     return {
       x: sx + cam.x - world.w / 2,
       y: sy + cam.y - world.h / 2,
     };
+  }
+
+  function syncPointerWorld(p) {
+    const w = screenToWorld(p.sx, p.sy);
+    p.x = w.x;
+    p.y = w.y;
+  }
+
+  function syncAllPointersWorld() {
+    for (const p of pointers) syncPointerWorld(p);
   }
 
   function occupiedNozzles(exceptId) {
@@ -344,18 +361,19 @@
   }
 
   function upsertPointer(id, clientX, clientY, fromMouseButton) {
-    const w = screenToWorld(clientX, clientY);
+    const s = clientToScreen(clientX, clientY);
     let p = pointers.find(x => x.id === id);
     if (!p) {
       p = {
-        id, x: w.x, y: w.y, active: true,
+        id, sx: s.sx, sy: s.sy, x: 0, y: 0, active: true,
         nx: 0, ny: 0, fx: 0, fy: 0, flameX: 0, flameY: 0,
         nozzle: null, button: fromMouseButton,
       };
       pointers.push(p);
     } else {
-      p.x = w.x; p.y = w.y; p.active = true;
+      p.sx = s.sx; p.sy = s.sy; p.active = true;
     }
+    syncPointerWorld(p);
     p.nozzle = nearestFreeNozzle(p.x, p.y, occupiedNozzles(id));
     if (p.nozzle < 0) p.nozzle = null;
   }
@@ -385,8 +403,9 @@
     if (e.pointerType === "mouse") {
       const p = pointers.find(x => x.id === "mouse-0");
       if (!p) return;
-      const w = screenToWorld(e.clientX, e.clientY);
-      p.x = w.x; p.y = w.y;
+      const s = clientToScreen(e.clientX, e.clientY);
+      p.sx = s.sx; p.sy = s.sy;
+      syncPointerWorld(p);
       rebindActivePointer();
     } else {
       const id = `t-${e.pointerId}`;
@@ -426,6 +445,10 @@
   function applyThrustForces(dt) {
     const firings = [];
     const outOfFuel = fuel <= 0;
+
+    // v9: re-project held finger from fixed screen pixel → current world each frame
+    // so camera follow / free-fall cannot drift thrust aim relative to the craft on screen.
+    syncAllPointersWorld();
 
     for (const p of pointers) {
       p.fx = 0; p.fy = 0; p.flameX = 0; p.flameY = 0;
@@ -530,124 +553,50 @@
     }
   }
 
-  function wrapMod(v, m) {
-    return ((v % m) + m) % m;
-  }
-
-  function drawParallax() {
+  function drawSimpleSky() {
+    // v9: restore pre-parallax look (v4-style) — no multi-layer parallax (avoids flicker)
     ctx.clearRect(0, 0, world.w, world.h);
-
-    const skyShift = wrapMod(cam.y * 0.008, world.h);
-    const sky = ctx.createLinearGradient(0, -skyShift * 0.3, 0, world.h - skyShift * 0.3);
-    sky.addColorStop(0, "#060b18");
-    sky.addColorStop(0.35, "#0c1830");
-    sky.addColorStop(0.7, "#152448");
-    sky.addColorStop(1, "#1e2f55");
+    const sky = ctx.createLinearGradient(0, 0, 0, world.h);
+    sky.addColorStop(0, "#0a1428");
+    sky.addColorStop(0.55, "#141c33");
+    sky.addColorStop(1, "#1a2238");
     ctx.fillStyle = sky;
     ctx.fillRect(0, 0, world.w, world.h);
 
-    const clipH = playH;
-
-    {
-      const px = cam.x * 0.06, py = cam.y * 0.05;
-      ctx.fillStyle = "#ffffff55";
-      for (let i = 0; i < 70; i++) {
-        const sx = wrapMod(i * 97 + 13 - px, world.w);
-        const sy = wrapMod(i * 53 + 29 - py, Math.max(1, clipH));
-        const s = (i % 5 === 0) ? 2.5 : 1.5;
-        ctx.fillRect(sx, sy, s, s);
-      }
+    ctx.fillStyle = "#ffffff22";
+    for (let i = 0; i < 50; i++) {
+      const sx = (i * 97 + 13 + Math.floor(cam.x * 0.02)) % world.w;
+      const sy = (i * 53 + 29) % Math.max(1, playH);
+      if (sy < playH - 4) ctx.fillRect(sx, sy, 2, 2);
     }
+  }
 
-    {
-      const px = cam.x * 0.18, py = cam.y * 0.14;
-      for (let i = 0; i < 8; i++) {
-        const bx = wrapMod(i * (world.w / 5) - px * 0.6, world.w + 80) - 40;
-        ctx.fillStyle = i % 2 ? "#1a2a4a44" : "#24365c55";
-        ctx.fillRect(bx, 0, 48 + (i % 3) * 16, clipH);
-      }
-      ctx.fillStyle = "#c8d8ff66";
-      for (let i = 0; i < 40; i++) {
-        const sx = wrapMod(i * 137 + 41 - px, world.w);
-        const sy = wrapMod(i * 89 + 17 - py, Math.max(1, clipH));
-        ctx.beginPath();
-        ctx.arc(sx, sy, 1.2 + (i % 3) * 0.4, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    }
-
-    {
-      const px = cam.x * 0.32, py = cam.y * 0.28;
-      const bandH = 56;
-      for (let i = -2; i < Math.ceil(clipH / bandH) + 3; i++) {
-        const by = wrapMod(i * bandH - py, clipH + bandH * 2) - bandH;
-        if (by > clipH) continue;
-        const alpha = 0.10 + (i & 1) * 0.06;
-        ctx.fillStyle = `rgba(160,190,255,${alpha})`;
-        ctx.fillRect(0, by, world.w, bandH * 0.55);
-        ctx.fillStyle = `rgba(200,220,255,${alpha + 0.05})`;
-        for (let j = 0; j < 5; j++) {
-          const cx = wrapMod(j * 170 + i * 40 - px, world.w + 120) - 60;
-          ctx.beginPath();
-          ctx.ellipse(cx, by + bandH * 0.3, 55, 14, 0, 0, Math.PI * 2);
-          ctx.fill();
-        }
-      }
-    }
-
-    {
-      const px = cam.x * 0.55, py = cam.y * 0.42;
-      const baseY = clipH * 0.72 + wrapMod(-py * 0.15, 40) - 20;
+  function drawSpeedStreaks() {
+    // v9: a few airflow lines from the craft tail, length ~ speed
+    const spd = Math.hypot(craft.vx, craft.vy);
+    if (spd < 12) return;
+    const ux = craft.vx / spd;
+    const uy = craft.vy / spd;
+    // rear tip in world (body +Y is down / engine end)
+    const rear = rot(0, cfg.bodyH * 0.48, craft.angle);
+    const rx = craft.x + rear.x;
+    const ry = craft.y + rear.y;
+    const len = Math.min(90, 14 + spd * 0.28);
+    const count = 5;
+    for (let i = 0; i < count; i++) {
+      const t = i / (count - 1);
+      const side = (t - 0.5) * cfg.bodyW * 0.85;
+      const off = rot(side, 0, craft.angle);
+      const ox = rx + off.x;
+      const oy = ry + off.y;
+      const jitter = ((i * 37) % 7) - 3;
+      const a = 0.12 + 0.28 * (1 - Math.abs(t - 0.5) * 1.4);
+      ctx.strokeStyle = `rgba(190,220,255,${a.toFixed(3)})`;
+      ctx.lineWidth = 1.2 + (i % 2) * 0.4;
       ctx.beginPath();
-      ctx.moveTo(-20, clipH);
-      const span = 160;
-      for (let x = -span; x < world.w + span; x += span) {
-        const wx = wrapMod(x - px, world.w + span * 2) - span;
-        const peak = 50 + ((Math.sin((x + px) * 0.01) + 1) * 35) + ((x / span) % 3) * 12;
-        ctx.lineTo(wx, baseY - peak);
-        ctx.lineTo(wx + span * 0.5, baseY - peak * 0.35);
-      }
-      ctx.lineTo(world.w + 20, clipH);
-      ctx.closePath();
-      ctx.fillStyle = "#1a2740cc";
-      ctx.fill();
-
-      const px2 = cam.x * 0.72, py2 = cam.y * 0.55;
-      const baseY2 = clipH * 0.82 + wrapMod(-py2 * 0.12, 30) - 15;
-      ctx.beginPath();
-      ctx.moveTo(-20, clipH);
-      for (let x = -120; x < world.w + 120; x += 120) {
-        const wx = wrapMod(x - px2, world.w + 240) - 120;
-        const peak = 28 + ((Math.cos((x + px2) * 0.014) + 1) * 22);
-        ctx.lineTo(wx, baseY2 - peak);
-        ctx.lineTo(wx + 60, baseY2 - peak * 0.4);
-      }
-      ctx.lineTo(world.w + 20, clipH);
-      ctx.closePath();
-      ctx.fillStyle = "#243552dd";
-      ctx.fill();
-    }
-
-    {
-      const px = cam.x * 0.85, py = cam.y * 0.7;
-      ctx.strokeStyle = "#6a8cc030";
-      ctx.lineWidth = 1;
-      const stepX = 48, stepY = 36;
-      const ox = -wrapMod(px, stepX);
-      const oy = -wrapMod(py, stepY);
-      for (let x = ox; x < world.w; x += stepX) {
-        ctx.beginPath();
-        ctx.moveTo(x, 0);
-        ctx.lineTo(x, clipH);
-        ctx.stroke();
-      }
-      ctx.strokeStyle = "#6a8cc022";
-      for (let y = oy; y < clipH; y += stepY) {
-        ctx.beginPath();
-        ctx.moveTo(0, y);
-        ctx.lineTo(world.w, y);
-        ctx.stroke();
-      }
+      ctx.moveTo(ox, oy);
+      ctx.lineTo(ox - ux * (len + jitter), oy - uy * (len + jitter));
+      ctx.stroke();
     }
   }
 
@@ -727,7 +676,7 @@
   }
 
   function draw() {
-    drawParallax();
+    drawSimpleSky();
 
     ctx.save();
     ctx.translate(-cam.x + world.w / 2, -cam.y + world.h / 2);
@@ -750,6 +699,7 @@
     }
 
     drawCraftBody();
+    drawSpeedStreaks();
 
     for (const p of pointers) {
       if (p.nozzle == null) continue;

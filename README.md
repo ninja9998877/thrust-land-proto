@@ -4,7 +4,7 @@
 
 **无 Unity / 无美术 / 无关卡 / 无广告。** 与 Sort 工程完全独立。
 
-当前版本：**v8**
+当前版本：**v9**
 
 ## 可玩
 
@@ -12,10 +12,12 @@
 - 本地：浏览器直接打开 `index.html`
 - 备用：https://raw.githack.com/ninja9998877/thrust-land-proto/main/index.html
 
-## v8 要点
+## v9 要点
 
-- **禁长按干扰喷气**（画布 / 游戏区）：`user-select: none`、`-webkit-user-select`、`-webkit-touch-callout: none`；`contextmenu` / `selectstart` preventDefault（右上参数板除外）；`touch-action: none` 保留
-- 继承 v7：去冷却、仅单指、方块多喷口 / 细长单喷口可切换（切换复位）、燃料有限、开局随机倾角
+- **推力方向按屏幕坐标**：按住不动时用手指/鼠标的画布像素点相对机体屏幕投影算方向；相机跟随下落不再让推力漂移
+- **背景还原**：去掉多层视差，恢复 v4 简洁星空 + 地面
+- **尾部气流**：速度相关的简易拖尾线条
+- 继承 v8：禁长按选中 / callout / contextmenu；去冷却、单指、机体切换、燃料、随机倾角
 
 ## 操作
 
