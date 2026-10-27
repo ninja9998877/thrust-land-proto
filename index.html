@@ -97,7 +97,7 @@
 </head>
 <body>
 <div id="hud">
-  <span><b>Thrust Land</b> · 手感原型 <b>v14</b></span>
+  <span><b>Thrust Land</b> · 手感原型 <b>v15</b></span>
   <span id="craftLabel">机体 方块排喷</span>
   <span id="alt">高度 — m</span>
   <span id="fuel">燃料 —</span>
@@ -114,7 +114,7 @@
   </div>
   <button id="resetBtn" type="button">重置 (R)</button>
 </div>
-<div id="hint">单指按住：指在机体下方喷底、上方喷顶（反向推力/调姿）· 右上切换机体 · 键 <b>1</b>/<b>2</b>/<b>R</b> · 燃料有限 · 小地图对准落点 · 开局约 3000 m 随机倾角</div>
+<div id="hint">单指按住：指在机体下方喷底、上方喷顶（反向推力/调姿）· 右上切换机体 · 键 <b>1</b>/<b>2</b>/<b>R</b> · 燃料有限 · 小地图对准落点 · 开场手弹烟头 → 约 3000 m 随机倾角</div>
 <canvas id="c"></canvas>
 <script>
 (() => {
@@ -175,6 +175,7 @@
     spawnAltitude: 3000,
     camLerp: 6,
     craftScreenFrac: 0.36,
+    // v15: cigarette skin sprites + intro hand + ashtray pad
     // v14: top nozzles + finger side→bank (above=top / below=bottom)
     // v13: restore on-screen craft switch + reset buttons (no params sliders)
     // v12: free-fall accel along body long axis (tilt → diagonal fall);
@@ -192,6 +193,29 @@
 
   let craftType = "rect";
 
+  const ASSET_URLS = {
+    craft_butt_slim: "assets/craft_butt_slim.png",
+    craft_butt_stub: "assets/craft_butt_stub.png",
+    pad_ashtray: "assets/pad_ashtray.png",
+    intro_hand_00: "assets/intro_hand_00.png",
+    intro_hand_01: "assets/intro_hand_01.png",
+    intro_hand_02: "assets/intro_hand_02.png",
+    fx_ember: "assets/fx_ember.png",
+    fx_ash_puff: "assets/fx_ash_puff.png",
+  };
+  /** @type {Record<string, HTMLImageElement>} */
+  const assets = {};
+  let assetsReady = false;
+
+  // intro: hand flick frames before free-fall (hand only, no god label)
+  const INTRO_FRAME_MS = 220;
+  const INTRO_KEYS = ["intro_hand_00", "intro_hand_01", "intro_hand_02"];
+  let phase = "intro"; // "intro" | "play"
+  let introFrame = 0;
+  let introElapsed = 0;
+  /** @type {{x:number,y:number,vx:number,vy:number,life:number,max:number,size:number,rot:number,kind:string}[]} */
+  let fxParts = [];
+
   const world = { w: 800, h: 600, groundY: 0 };
   const cam = { x: 0, y: 0 };
   let controlH = 160;
@@ -205,6 +229,18 @@
 
   /** @type {{id:string,sx:number,sy:number,x:number,y:number,active:boolean,nx:number,ny:number,fx:number,fy:number,flameX:number,flameY:number,nozzle:number|null,button?:number}[]} */
   let pointers = [];
+
+  function loadAssets() {
+    const keys = Object.keys(ASSET_URLS);
+    let left = keys.length;
+    if (!left) { assetsReady = true; return Promise.resolve(); }
+    return Promise.all(keys.map((k) => new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => { assets[k] = img; left--; resolve(); };
+      img.onerror = () => { console.warn("asset fail", k); left--; resolve(); };
+      img.src = ASSET_URLS[k];
+    }))).then(() => { assetsReady = true; });
+  }
 
   function applyCraftType(type, doReset) {
     const def = CRAFTS[type] || CRAFTS.rect;
@@ -261,11 +297,15 @@
     craft.omega = 0;
     fuel = cfg.fuelMax;
     pointers = [];
+    fxParts = [];
+    phase = "intro";
+    introFrame = 0;
+    introElapsed = 0;
     cam.x = craft.x;
     cam.y = craft.y + world.h / 2 - playH * cfg.craftScreenFrac;
     const deg = (craft.angle * 180 / Math.PI).toFixed(0);
     const name = (CRAFTS[craftType] || CRAFTS.rect).label;
-    statEl.textContent = `已复位 · ${name} · 倾角 ${deg}° · 燃料满`;
+    statEl.textContent = `开场 · ${name} · 倾角 ${deg}°`;
   }
 
   function rot(lx, ly, ang) {
@@ -644,29 +684,21 @@
     const px = cfg.padX;
     const half = cfg.padHalfW;
     const gy = world.groundY;
-    ctx.fillStyle = "#2a3a28";
-    ctx.fillRect(px - half, gy - 2, half * 2, 6);
-    ctx.strokeStyle = "#8fd98f";
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(px - half, gy);
-    ctx.lineTo(px + half, gy);
-    ctx.stroke();
-    // H marks
-    ctx.strokeStyle = "#c8f0c8aa";
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(px - 18, gy - 1);
-    ctx.lineTo(px - 18, gy - 22);
-    ctx.moveTo(px + 18, gy - 1);
-    ctx.lineTo(px + 18, gy - 22);
-    ctx.moveTo(px - 18, gy - 12);
-    ctx.lineTo(px + 18, gy - 12);
-    ctx.stroke();
-    ctx.fillStyle = "#9ee09e88";
-    ctx.beginPath();
-    ctx.arc(px, gy - 1, 6, 0, Math.PI * 2);
-    ctx.fill();
+    const padImg = assets.pad_ashtray;
+    if (padImg && padImg.complete && padImg.naturalWidth) {
+      const size = half * 2;
+      // bottom edge on ground; green cross baked in art
+      ctx.drawImage(padImg, px - size / 2, gy - size + 4, size, size);
+    } else {
+      ctx.fillStyle = "#2a3a28";
+      ctx.fillRect(px - half, gy - 2, half * 2, 6);
+      ctx.strokeStyle = "#8fd98f";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(px - half, gy);
+      ctx.lineTo(px + half, gy);
+      ctx.stroke();
+    }
   }
 
   function drawMinimap() {
@@ -776,9 +808,12 @@
     ctx.rotate(craft.angle);
     const halfW = cfg.bodyW / 2, halfH = cfg.bodyH / 2;
     const shape = (CRAFTS[craftType] || CRAFTS.rect).shape;
-
-    if (shape === "rocket") {
-      // slim rocket: nose cone + body + fins
+    // filter tip = nose (up / -Y); burning end = tail (+Y)
+    const skinKey = shape === "rocket" ? "craft_butt_slim" : "craft_butt_stub";
+    const skin = assets[skinKey];
+    if (skin && skin.complete && skin.naturalWidth) {
+      ctx.drawImage(skin, -halfW, -halfH, cfg.bodyW, cfg.bodyH);
+    } else if (shape === "rocket") {
       ctx.fillStyle = "#f2f6ff";
       ctx.strokeStyle = "#6eb6ff";
       ctx.lineWidth = 2.5;
@@ -791,37 +826,6 @@
       ctx.closePath();
       ctx.fill();
       ctx.stroke();
-      // nose accent
-      ctx.fillStyle = "#ff6b6b";
-      ctx.beginPath();
-      ctx.moveTo(0, -halfH);
-      ctx.lineTo(halfW * 0.55, -halfH + halfW * 1.1);
-      ctx.lineTo(-halfW * 0.55, -halfH + halfW * 1.1);
-      ctx.closePath();
-      ctx.fill();
-      // fins
-      ctx.fillStyle = "#c8d8f0";
-      ctx.strokeStyle = "#6eb6ff";
-      ctx.beginPath();
-      ctx.moveTo(-halfW * 0.85, halfH - 28);
-      ctx.lineTo(-halfW * 1.55, halfH - 4);
-      ctx.lineTo(-halfW * 0.85, halfH - 10);
-      ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo(halfW * 0.85, halfH - 28);
-      ctx.lineTo(halfW * 1.55, halfH - 4);
-      ctx.lineTo(halfW * 0.85, halfH - 10);
-      ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
-      // engine bell hint (bottom)
-      ctx.fillStyle = "#8a9ab8";
-      ctx.fillRect(-halfW * 0.45, halfH - 10, halfW * 0.9, 8);
-      // top thruster ring (nose)
-      ctx.fillStyle = "#8a9ab8";
-      ctx.fillRect(-halfW * 0.35, -halfH + 2, halfW * 0.7, 5);
     } else {
       ctx.fillStyle = "#f2f6ff";
       ctx.strokeStyle = "#6eb6ff";
@@ -830,14 +834,6 @@
       ctx.rect(-halfW, -halfH, cfg.bodyW, cfg.bodyH);
       ctx.fill();
       ctx.stroke();
-      ctx.fillStyle = "#ff6b6b";
-      ctx.fillRect(-8, -halfH, 16, 10);
-    }
-
-    // top accent thruster strip for rect craft
-    if (shape === "rect") {
-      ctx.fillStyle = "#8a9ab8";
-      ctx.fillRect(-halfW * 0.55, -halfH, halfW * 1.1, 4);
     }
 
     const total = totalNozzles();
@@ -854,6 +850,92 @@
       ctx.fill();
     }
     ctx.restore();
+  }
+
+  function spawnThrustFx(wx, wy, flameX, flameY, isTop) {
+    // ember + occasional ash puff near nozzle (bottom bank preferred for ember)
+    const ember = assets.fx_ember;
+    const puff = assets.fx_ash_puff;
+    if (!(ember && ember.complete)) return;
+    for (let i = 0; i < 2; i++) {
+      const spread = (Math.random() - 0.5) * 10;
+      const speed = 40 + Math.random() * 70;
+      fxParts.push({
+        x: wx + (Math.random() - 0.5) * 6,
+        y: wy + (Math.random() - 0.5) * 6,
+        vx: flameX * speed + spread,
+        vy: flameY * speed + (Math.random() - 0.5) * 12,
+        life: 0.18 + Math.random() * 0.22,
+        max: 0.4,
+        size: 10 + Math.random() * 14,
+        rot: Math.random() * Math.PI * 2,
+        kind: "ember",
+      });
+    }
+    if (!isTop && puff && puff.complete && Math.random() < 0.18) {
+      fxParts.push({
+        x: wx, y: wy,
+        vx: flameX * 20 + (Math.random() - 0.5) * 16,
+        vy: flameY * 20 - 8,
+        life: 0.35 + Math.random() * 0.2,
+        max: 0.55,
+        size: 22 + Math.random() * 18,
+        rot: Math.random() * Math.PI * 2,
+        kind: "puff",
+      });
+    }
+  }
+
+  function updateFx(dt) {
+    for (const p of fxParts) {
+      p.life -= dt;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.vx *= 0.92;
+      p.vy *= 0.92;
+    }
+    fxParts = fxParts.filter((p) => p.life > 0);
+  }
+
+  function drawFx() {
+    for (const p of fxParts) {
+      const img = p.kind === "puff" ? assets.fx_ash_puff : assets.fx_ember;
+      if (!(img && img.complete && img.naturalWidth)) continue;
+      const a = Math.max(0, Math.min(1, p.life / p.max));
+      ctx.save();
+      ctx.globalAlpha = a * 0.85;
+      ctx.translate(p.x, p.y);
+      ctx.rotate(p.rot);
+      const s = p.size;
+      ctx.drawImage(img, -s / 2, -s / 2, s, s);
+      ctx.restore();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function drawIntro() {
+    drawSimpleSky();
+    // soft vignette behind hand
+    ctx.fillStyle = "#0b1020aa";
+    ctx.fillRect(0, 0, world.w, world.h);
+    const key = INTRO_KEYS[Math.min(introFrame, INTRO_KEYS.length - 1)];
+    const img = assets[key];
+    const size = Math.min(world.w, playH) * 0.72;
+    const cx = world.w / 2;
+    const cy = playH * 0.48;
+    if (img && img.complete && img.naturalWidth) {
+      ctx.drawImage(img, cx - size / 2, cy - size / 2, size, size);
+    } else {
+      ctx.fillStyle = "#e8eefc";
+      ctx.font = "16px ui-sans-serif, system-ui, sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText("…", cx, cy);
+    }
+    ctx.fillStyle = "#c9d4eecc";
+    ctx.font = "13px ui-sans-serif, system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("弹一下…", cx, Math.min(playH - 18, cy + size / 2 + 28));
+    drawMinimap();
   }
 
   function draw() {
@@ -907,6 +989,7 @@
       ctx.moveTo(n.x, n.y);
       ctx.lineTo(n.x + p.flameX * fl, n.y + p.flameY * fl);
       ctx.stroke();
+      if (Math.random() < 0.55) spawnThrustFx(n.x, n.y, p.flameX, p.flameY, isTop);
       ctx.strokeStyle = isTop ? "#a5f3fc" : "#5eead4";
       ctx.lineWidth = 2;
       ctx.beginPath();
@@ -946,6 +1029,8 @@
       }
     }
 
+    drawFx();
+
     ctx.restore();
 
     ctx.fillStyle = "#0a1020cc";
@@ -969,6 +1054,24 @@
     let dt = (now - last) / 1000;
     last = now;
     if (dt > 0.05) dt = 0.05;
+
+    if (phase === "intro") {
+      introElapsed += dt * 1000;
+      while (introElapsed >= INTRO_FRAME_MS && introFrame < INTRO_KEYS.length - 1) {
+        introElapsed -= INTRO_FRAME_MS;
+        introFrame++;
+      }
+      if (introFrame >= INTRO_KEYS.length - 1 && introElapsed >= INTRO_FRAME_MS) {
+        phase = "play";
+        const deg = (craft.angle * 180 / Math.PI).toFixed(0);
+        const name = (CRAFTS[craftType] || CRAFTS.rect).label;
+        statEl.textContent = `下落 · ${name} · 倾角 ${deg}° · 燃料满`;
+      }
+      drawIntro();
+      requestAnimationFrame(frame);
+      return;
+    }
+
     const steps = 2;
     const h = dt / steps;
     for (let s = 0; s < steps; s++) {
@@ -976,6 +1079,7 @@
       integrate(h);
     }
     updateCamera(dt);
+    updateFx(dt);
 
     const alt = Math.max(0, altitude());
     const spd = Math.hypot(craft.vx, craft.vy);
@@ -1002,7 +1106,7 @@
   if (window.visualViewport) {
     window.visualViewport.addEventListener("resize", () => { resize(); });
   }
-  requestAnimationFrame(frame);
+  loadAssets().then(() => requestAnimationFrame(frame));
 })();
 </script>
 </body>
