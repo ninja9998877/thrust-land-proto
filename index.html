@@ -46,7 +46,7 @@
 </head>
 <body>
 <div id="hud">
-  <span><b>Thrust Land</b> · 手感原型 <b>v5</b></span>
+  <span><b>Thrust Land</b> · 手感原型 <b>v6</b></span>
   <span id="alt">高度 — m</span>
   <span id="stat">就绪</span>
 </div>
@@ -91,6 +91,15 @@
 
   const world = { w: 800, h: 600, groundY: 0 };
   const cam = { x: 0, y: 0 };
+  // Velocity-coupled parallax scrolls (screen-space). Falling (vy>0) → background rolls UP.
+  // speedScale spreads layers so near >> far; near can exceed 1 vs camera-lock feel.
+  const PARA = {
+    // far stars, mid haze, clouds, ridges, near grid
+    speedY: [0.15, 0.45, 0.9, 1.15, 1.35],
+    speedX: [0.08, 0.22, 0.4, 0.55, 0.7], // weaker lateral
+    scrollY: [0, 0, 0, 0, 0],
+    scrollX: [0, 0, 0, 0, 0],
+  };
   let controlH = 160;
   let playH = 440;
 
@@ -141,6 +150,10 @@
     pointers = [];
     cam.x = craft.x;
     cam.y = craft.y + world.h / 2 - playH * cfg.craftScreenFrac;
+    for (let i = 0; i < PARA.scrollY.length; i++) {
+      PARA.scrollY[i] = 0;
+      PARA.scrollX[i] = 0;
+    }
     statEl.textContent = "已复位 · 自由落体";
   }
 
@@ -423,13 +436,25 @@
     return ((v % m) + m) % m;
   }
 
-  /** Multi-layer parallax sky — cam-driven, ground stays world-locked. */
+  function updateParallax(dt) {
+    // Couple to craft velocity so free-fall scrolls even while cam lerps / clamps.
+    // +vy (down) increases scrollY → elements drawn with -scroll move UP on screen.
+    // Lateral: vx-coupled; draw also adds a weak cam.x sample per layer.
+    for (let i = 0; i < PARA.speedY.length; i++) {
+      PARA.scrollY[i] += craft.vy * dt * PARA.speedY[i];
+      PARA.scrollX[i] += craft.vx * dt * PARA.speedX[i];
+    }
+  }
+
+  /** Multi-layer parallax sky — velocity-coupled scroll; ground stays world-locked. */
   function drawParallax() {
     ctx.clearRect(0, 0, world.w, world.h);
 
-    // Deep sky gradient (very far: almost no scroll, slight hue shift with altitude)
-    const skyShift = wrapMod(cam.y * 0.008, world.h);
-    const sky = ctx.createLinearGradient(0, -skyShift * 0.3, 0, world.h - skyShift * 0.3);
+    const clipH = playH; // don't draw parallax into control strip
+
+    // Deep sky gradient (slowest vertical roll)
+    const skyY = wrapMod(PARA.scrollY[0] * 0.5, Math.max(1, clipH));
+    const sky = ctx.createLinearGradient(0, -skyY * 0.4, 0, world.h - skyY * 0.4);
     sky.addColorStop(0, "#060b18");
     sky.addColorStop(0.35, "#0c1830");
     sky.addColorStop(0.7, "#152448");
@@ -437,100 +462,128 @@
     ctx.fillStyle = sky;
     ctx.fillRect(0, 0, world.w, world.h);
 
-    const clipH = playH; // don't draw parallax into control strip
-
-    // Layer 0 — far stars (slow)
+    // Layer 0 — far stars (speedY 0.15)
     {
-      const px = cam.x * 0.06, py = cam.y * 0.05;
-      ctx.fillStyle = "#ffffff55";
-      for (let i = 0; i < 70; i++) {
+      const px = PARA.scrollX[0] + cam.x * 0.05;
+      const py = PARA.scrollY[0];
+      ctx.fillStyle = "#ffffff66";
+      for (let i = 0; i < 140; i++) {
         const sx = wrapMod(i * 97 + 13 - px, world.w);
         const sy = wrapMod(i * 53 + 29 - py, Math.max(1, clipH));
-        const s = (i % 5 === 0) ? 2.5 : 1.5;
+        const s = (i % 5 === 0) ? 2.4 : 1.3;
         ctx.fillRect(sx, sy, s, s);
       }
     }
 
-    // Layer 1 — mid starfield + vertical bands (clear horizontal drift)
+    // Layer 1 — mid haze bands + stars (speedY 0.45)
     {
-      const px = cam.x * 0.18, py = cam.y * 0.14;
-      for (let i = 0; i < 8; i++) {
-        const bx = wrapMod(i * (world.w / 5) - px * 0.6, world.w + 80) - 40;
-        ctx.fillStyle = i % 2 ? "#1a2a4a44" : "#24365c55";
-        ctx.fillRect(bx, 0, 48 + (i % 3) * 16, clipH);
+      const px = PARA.scrollX[1] + cam.x * 0.12;
+      const py = PARA.scrollY[1];
+      const bandH = 36;
+      for (let i = -2; i < Math.ceil(clipH / bandH) + 4; i++) {
+        const by = wrapMod(i * bandH - py, clipH + bandH * 2) - bandH;
+        if (by > clipH) continue;
+        ctx.fillStyle = i % 2 ? "#1a2a4a55" : "#24365c66";
+        ctx.fillRect(0, by, world.w, bandH * 0.45);
       }
-      ctx.fillStyle = "#c8d8ff66";
-      for (let i = 0; i < 40; i++) {
+      // vertical soft pillars (lateral cue)
+      for (let i = 0; i < 12; i++) {
+        const bx = wrapMod(i * (world.w / 7) - px * 0.7, world.w + 60) - 30;
+        ctx.fillStyle = i % 2 ? "#1a2a4a33" : "#2a3e6044";
+        ctx.fillRect(bx, 0, 28 + (i % 3) * 10, clipH);
+      }
+      ctx.fillStyle = "#c8d8ff77";
+      for (let i = 0; i < 70; i++) {
         const sx = wrapMod(i * 137 + 41 - px, world.w);
         const sy = wrapMod(i * 89 + 17 - py, Math.max(1, clipH));
         ctx.beginPath();
-        ctx.arc(sx, sy, 1.2 + (i % 3) * 0.4, 0, Math.PI * 2);
+        ctx.arc(sx, sy, 1.1 + (i % 3) * 0.35, 0, Math.PI * 2);
         ctx.fill();
       }
     }
 
-    // Layer 2 — cloud / haze bands (strong Y parallax — obvious during free-fall)
+    // Layer 2 — dense cloud / haze (speedY 0.9)
     {
-      const px = cam.x * 0.32, py = cam.y * 0.28;
-      const bandH = 56;
-      for (let i = -2; i < Math.ceil(clipH / bandH) + 3; i++) {
+      const px = PARA.scrollX[2] + cam.x * 0.2;
+      const py = PARA.scrollY[2];
+      const bandH = 40;
+      for (let i = -3; i < Math.ceil(clipH / bandH) + 5; i++) {
         const by = wrapMod(i * bandH - py, clipH + bandH * 2) - bandH;
-        if (by > clipH) continue;
-        const alpha = 0.10 + (i & 1) * 0.06;
+        if (by > clipH + 20) continue;
+        const alpha = 0.12 + (i & 1) * 0.07;
         ctx.fillStyle = `rgba(160,190,255,${alpha})`;
-        ctx.fillRect(0, by, world.w, bandH * 0.55);
-        // soft lumps
-        ctx.fillStyle = `rgba(200,220,255,${alpha + 0.05})`;
-        for (let j = 0; j < 5; j++) {
-          const cx = wrapMod(j * 170 + i * 40 - px, world.w + 120) - 60;
+        ctx.fillRect(0, by, world.w, bandH * 0.5);
+        ctx.fillStyle = `rgba(200,220,255,${alpha + 0.06})`;
+        for (let j = 0; j < 8; j++) {
+          const cx = wrapMod(j * 110 + i * 37 - px, world.w + 140) - 70;
           ctx.beginPath();
-          ctx.ellipse(cx, by + bandH * 0.3, 55, 14, 0, 0, Math.PI * 2);
+          ctx.ellipse(cx, by + bandH * 0.28, 42, 11, 0, 0, Math.PI * 2);
           ctx.fill();
+        }
+        // short streak lines for motion readability
+        ctx.strokeStyle = `rgba(180,210,255,${alpha + 0.08})`;
+        ctx.lineWidth = 1.2;
+        for (let j = 0; j < 6; j++) {
+          const lx = wrapMod(j * 140 + i * 23 - px * 1.1, world.w + 80) - 40;
+          const ly = by + 8 + (j % 3) * 6;
+          ctx.beginPath();
+          ctx.moveTo(lx, ly);
+          ctx.lineTo(lx + 28 + (j % 4) * 8, ly);
+          ctx.stroke();
         }
       }
     }
 
-    // Layer 3 — near mountains / jagged silhouettes (faster, still << 1)
+    // Layer 3 — mountain ridges (speedY 1.15) — full vertical scroll, not pinned to bottom
     {
-      const px = cam.x * 0.55, py = cam.y * 0.42;
-      const baseY = clipH * 0.72 + wrapMod(-py * 0.15, 40) - 20;
-      ctx.beginPath();
-      ctx.moveTo(-20, clipH);
-      const span = 160;
-      for (let x = -span; x < world.w + span; x += span) {
-        const wx = wrapMod(x - px, world.w + span * 2) - span;
-        const peak = 50 + ((Math.sin((x + px) * 0.01) + 1) * 35) + ((x / span) % 3) * 12;
-        ctx.lineTo(wx, baseY - peak);
-        ctx.lineTo(wx + span * 0.5, baseY - peak * 0.35);
+      const px = PARA.scrollX[3] + cam.x * 0.35;
+      const py = PARA.scrollY[3];
+      const ridgeH = 110;
+      for (let row = -2; row < Math.ceil(clipH / ridgeH) + 3; row++) {
+        const baseY = wrapMod(row * ridgeH - py, clipH + ridgeH * 2) - ridgeH * 0.2;
+        if (baseY > clipH + 40) continue;
+        ctx.beginPath();
+        ctx.moveTo(-20, baseY + 80);
+        const span = 90;
+        for (let x = -span; x < world.w + span; x += span) {
+          const wx = x; // lateral shift via px in height noise
+          const peak = 36 + ((Math.sin((x + px) * 0.012 + row) + 1) * 28) + ((Math.floor(x / span) + row * 3) % 4) * 8;
+          ctx.lineTo(wx, baseY + 80 - peak);
+          ctx.lineTo(wx + span * 0.5, baseY + 80 - peak * 0.35);
+        }
+        ctx.lineTo(world.w + 20, baseY + 80);
+        ctx.closePath();
+        ctx.fillStyle = row % 2 ? "#1a2740bb" : "#222f48cc";
+        ctx.fill();
       }
-      ctx.lineTo(world.w + 20, clipH);
-      ctx.closePath();
-      ctx.fillStyle = "#1a2740cc";
-      ctx.fill();
-
-      // nearer ridge (even faster lateral)
-      const px2 = cam.x * 0.72, py2 = cam.y * 0.55;
-      const baseY2 = clipH * 0.82 + wrapMod(-py2 * 0.12, 30) - 15;
-      ctx.beginPath();
-      ctx.moveTo(-20, clipH);
-      for (let x = -120; x < world.w + 120; x += 120) {
-        const wx = wrapMod(x - px2, world.w + 240) - 120;
-        const peak = 28 + ((Math.cos((x + px2) * 0.014) + 1) * 22);
-        ctx.lineTo(wx, baseY2 - peak);
-        ctx.lineTo(wx + 60, baseY2 - peak * 0.4);
+      // nearer ridge strip
+      const px2 = PARA.scrollX[3] * 1.1 + cam.x * 0.45;
+      const py2 = PARA.scrollY[3] * 1.05;
+      const ridgeH2 = 80;
+      for (let row = -2; row < Math.ceil(clipH / ridgeH2) + 3; row++) {
+        const baseY = wrapMod(row * ridgeH2 - py2 + 30, clipH + ridgeH2 * 2) - 10;
+        if (baseY > clipH + 30) continue;
+        ctx.beginPath();
+        ctx.moveTo(-20, baseY + 55);
+        for (let x = -70; x < world.w + 70; x += 70) {
+          const peak = 18 + ((Math.cos((x + px2) * 0.018 + row) + 1) * 16);
+          ctx.lineTo(x, baseY + 55 - peak);
+          ctx.lineTo(x + 35, baseY + 55 - peak * 0.4);
+        }
+        ctx.lineTo(world.w + 20, baseY + 55);
+        ctx.closePath();
+        ctx.fillStyle = "#2a3a55dd";
+        ctx.fill();
       }
-      ctx.lineTo(world.w + 20, clipH);
-      ctx.closePath();
-      ctx.fillStyle = "#243552dd";
-      ctx.fill();
     }
 
-    // Layer 4 — near grid streaks (very obvious relative motion vs world ground)
+    // Layer 4 — near grid (speedY 1.35) — dense, obvious vs craft / ground
     {
-      const px = cam.x * 0.85, py = cam.y * 0.7;
-      ctx.strokeStyle = "#6a8cc030";
+      const px = PARA.scrollX[4] + cam.x * 0.5;
+      const py = PARA.scrollY[4];
+      ctx.strokeStyle = "#7a9cd040";
       ctx.lineWidth = 1;
-      const stepX = 48, stepY = 36;
+      const stepX = 28, stepY = 22;
       const ox = -wrapMod(px, stepX);
       const oy = -wrapMod(py, stepY);
       for (let x = ox; x < world.w; x += stepX) {
@@ -539,12 +592,19 @@
         ctx.lineTo(x, clipH);
         ctx.stroke();
       }
-      ctx.strokeStyle = "#6a8cc022";
+      ctx.strokeStyle = "#7a9cd032";
       for (let y = oy; y < clipH; y += stepY) {
         ctx.beginPath();
         ctx.moveTo(0, y);
         ctx.lineTo(world.w, y);
         ctx.stroke();
+      }
+      // extra short ticks for denser motion cue
+      ctx.fillStyle = "#9eb8e028";
+      for (let i = 0; i < 60; i++) {
+        const sx = wrapMod(i * 53 - px * 1.2, world.w);
+        const sy = wrapMod(i * 41 - py, Math.max(1, clipH));
+        ctx.fillRect(sx, sy, 10, 2);
       }
     }
   }
@@ -677,6 +737,7 @@
       integrate(h);
     }
     updateCamera(dt);
+    updateParallax(dt);
 
     const alt = Math.max(0, altitude());
     const spd = Math.hypot(craft.vx, craft.vy);
