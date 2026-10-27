@@ -4,13 +4,17 @@ Minimal web feel-test: three nozzle layouts, single-finger thrust, hold-to-steer
 
 **No Unity / no levels-as-campaign / no ads.** Independent from Sort. Cigarette-skin art drop-in.
 
-Current version: **v20**
+Current version: **v21**
 
 ## Play
 
 - **GitHub Pages**: https://ninja9998877.github.io/thrust-land-proto/
 - Local: open `index.html` in a browser
 - Mirror: https://raw.githack.com/ninja9998877/thrust-land-proto/main/index.html
+
+## v21 highlights
+
+- **L2 thrust +35%**: per-nozzle `thrustMult: 1.35` (base 90 → 121.5); L1/L3 unchanged at 90
 
 ## v20 highlights
 
