@@ -42,7 +42,7 @@
 </head>
 <body>
 <div id="hud">
-  <span><b>Thrust Land</b> · 手感原型 <b>v2</b></span>
+  <span><b>Thrust Land</b> · 手感原型 <b>v3</b></span>
   <span id="stat">就绪</span>
 </div>
 <div id="params">
@@ -50,7 +50,7 @@
   <label>推力 <span id="vThrust">180</span><input id="thrust" type="range" min="60" max="360" value="180" /></label>
   <label>偏角° <span id="vAngle">60</span><input id="angle" type="range" min="15" max="80" value="60" /></label>
   <label>重力 <span id="vG">55</span><input id="g" type="range" min="20" max="120" value="55" /></label>
-  <label>阻尼 <span id="vDrag">0.15</span><input id="drag" type="range" min="0" max="50" value="15" /></label>
+  <label>阻尼 <span id="vDrag">0.35</span><input id="drag" type="range" min="0" max="80" value="35" /></label>
   <button id="resetBtn" type="button">复位 (R)</button>
 </div>
 <div id="hint">触屏：一/两指按住喷气 · 鼠标：左键一喷口、右键另一喷口 · R 复位 · 目标：按住调姿→落地</div>
@@ -67,8 +67,10 @@
     thrust: 180,
     maxAngleDeg: 60,
     gravity: 55,
-    linearDrag: 0.15,
-    angularDrag: 2.2,
+    linearDrag: 0.35,
+    angularDrag: 8,
+    torqueCoef: 0.015,
+    omegaCap: 2.5,
     bodyW: 56,
     bodyH: 96,
     nozzleInsetX: 18,
@@ -260,46 +262,48 @@
   });
 
   function applyThrustForces(dt) {
-    let active = 0;
+    const firings = [];
     for (const p of pointers) {
       if (p.nozzle == null) continue;
       const n = nozzleWorld(p.nozzle);
-      // Desired direction: from nozzle toward press point? Spec: 按下世界坐标与最近喷火口连线 = 推力向量方向；推力从喷口沿该方向施加
-      // Thrust vector direction along nozzle→press. Force on craft along that line.
-      // Newton: exhaust goes opposite; for feel proto, force on body = thrust * direction(nozzle → press) clamped vs body-down.
-      // Wait: rockets push opposite exhaust. Exhaust out bottom → force up. Press below/side aims thrust.
-      // "连线为推力向量方向；推力从喷口沿该方向施加（对机体的力沿连线，偏角相对机体向下轴钳制）"
-      // So force on body is along the line, clamped relative to body-down. Direction from nozzle to press = where we "point" the jet visually; force on craft is opposite to exhaust, so if jet shoots toward press (downish), force is opposite = upish.
-      // Visual: flame from nozzle toward press. Force on craft = -flameDir = press→nozzle? Or flameDir = nozzle→press and force = -flameDir?
-      // Typical: finger below craft → thrust up. Nozzle at bottom, press below → nozzle→press is down → force should be up = -(nozzle→press).
+      // Visual: flame nozzle→press; force on craft = -flame (clamped vs body-down).
       let dx = p.x - n.x;
       let dy = p.y - n.y;
       if (dx * dx + dy * dy < 1e-6) {
-        // default body down (exhaust down)
         const d = bodyDown();
         dx = d.x; dy = d.y;
       }
       const flame = clampAngle({ x: dx, y: dy }, cfg.maxAngleDeg);
-      // Force on craft opposite to exhaust/flame
       const fx = -flame.x * cfg.thrust;
       const fy = -flame.y * cfg.thrust;
       p.nx = n.x; p.ny = n.y;
       p.fx = fx; p.fy = fy;
       p.flameX = flame.x; p.flameY = flame.y;
-
-      craft.vx += fx * dt;
-      craft.vy += fy * dt;
-
-      // Torque: force applied at nozzle offset from COM
-      const rx = n.x - craft.x;
-      const ry = n.y - craft.y;
-      const torque = rx * fy - ry * fx; // 2D cross
-      // I approx for rectangle
-      const I = (cfg.bodyW * cfg.bodyW + cfg.bodyH * cfg.bodyH) / 12 * 0.02;
-      craft.omega += (torque / Math.max(I, 1e-4)) * dt * 0.045;
-      active++;
+      firings.push({ n, fx, fy, flameX: flame.x, flameY: flame.y });
     }
-    return active;
+
+    // Dual nozzles: cut torque hard; similar aim → even less twist so hover stays stable.
+    let torqueScale = 1;
+    if (firings.length >= 2) {
+      torqueScale = 0.4;
+      const a = firings[0], b = firings[1];
+      const aimDot = a.flameX * b.flameX + a.flameY * b.flameY;
+      if (aimDot > 0.65) torqueScale *= 0.5;
+    } else if (firings.length === 1) {
+      torqueScale = 0.7; // single-side spray still gentler than v2
+    }
+
+    const I = (cfg.bodyW * cfg.bodyW + cfg.bodyH * cfg.bodyH) / 12 * 0.02;
+    for (const f of firings) {
+      craft.vx += f.fx * dt;
+      craft.vy += f.fy * dt;
+      const rx = f.n.x - craft.x;
+      const ry = f.n.y - craft.y;
+      const torque = rx * f.fy - ry * f.fx;
+      craft.omega += (torque / Math.max(I, 1e-4)) * dt * cfg.torqueCoef * torqueScale;
+    }
+    craft.omega = Math.max(-cfg.omegaCap, Math.min(cfg.omegaCap, craft.omega));
+    return firings.length;
   }
 
   function integrate(dt) {
@@ -307,6 +311,7 @@
     craft.vx *= Math.max(0, 1 - cfg.linearDrag * dt);
     craft.vy *= Math.max(0, 1 - cfg.linearDrag * 0.35 * dt);
     craft.omega *= Math.max(0, 1 - cfg.angularDrag * dt);
+    craft.omega = Math.max(-cfg.omegaCap, Math.min(cfg.omegaCap, craft.omega));
 
     craft.x += craft.vx * dt;
     craft.y += craft.vy * dt;
