@@ -20,7 +20,7 @@
     -webkit-touch-callout: none;
   }
   #hud {
-    position: fixed; left: 12px; top: 12px; right: 150px;
+    position: fixed; left: 12px; top: 12px; right: 150px; /* leave room for craft/reset */
     pointer-events: none; z-index: 2;
     display: flex; flex-wrap: wrap; gap: 8px 16px;
     font-size: 13px; line-height: 1.35; opacity: 0.92;
@@ -49,15 +49,10 @@
   }
   #fuel.low { color: #ff8a8a; }
   #fuel.low .bar > i { background: linear-gradient(90deg, #c04040, #ff8888); }
-  #hint {
-    position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%);
-    z-index: 2; pointer-events: none;
-    background: #111a2ecc; border: 1px solid #335; border-radius: 10px;
-    padding: 8px 14px; font-size: 12px; max-width: min(92vw, 520px);
-    text-align: center; color: #c9d4ee;
-  }
+  /* hint removed — minimap occupies former bottom caption slot */
   #minimap {
-    position: fixed; right: 12px; top: 12px; z-index: 3;
+    position: fixed; left: 50%; bottom: 12px; transform: translateX(-50%);
+    z-index: 3;
     width: 128px; height: 128px; pointer-events: none;
     background: #0e1628ee; border: 1px solid #4a6a9aaa; border-radius: 10px;
     box-shadow: 0 2px 10px #0008;
@@ -70,7 +65,8 @@
     background: #0a1220cc; padding: 2px 0; letter-spacing: 0.02em;
   }
   #controls {
-    position: fixed; right: 12px; top: 148px; z-index: 3;
+    /* top-right only; clear of top-nozzle touch band */
+    position: fixed; right: 12px; top: 12px; z-index: 3;
     width: 128px;
     display: flex; flex-direction: column; gap: 6px;
     pointer-events: auto;
@@ -97,15 +93,11 @@
 </head>
 <body>
 <div id="hud">
-  <span><b>Thrust Land</b> · 手感原型 <b>v16</b></span>
+  <span><b>Thrust Land</b> · 手感原型 <b>v17</b></span>
   <span id="craftLabel">机体 方块排喷</span>
   <span id="alt">高度 — m</span>
   <span id="fuel">燃料 —</span>
   <span id="stat">就绪</span>
-</div>
-<div id="minimap" aria-label="地面小地图">
-  <canvas id="mm" width="128" height="128"></canvas>
-  <div class="cap">地面 · 落点</div>
 </div>
 <div id="controls" aria-label="机体与复位">
   <div class="craftRow">
@@ -114,7 +106,10 @@
   </div>
   <button id="resetBtn" type="button">重置 (R)</button>
 </div>
-<div id="hint">单指按住：指在机体下方喷底、上方喷顶（反向推力/调姿）· 右上切换机体 · 键 <b>1</b>/<b>2</b>/<b>R</b> · 燃料有限 · 小地图对准落点 · 开场手弹烟头 → 约 3000 m 随机倾角</div>
+<div id="minimap" aria-label="地面小地图">
+  <canvas id="mm" width="128" height="128"></canvas>
+  <div class="cap">地面 · 落点 · 1/2/R</div>
+</div>
 <canvas id="c"></canvas>
 <script>
 (() => {
