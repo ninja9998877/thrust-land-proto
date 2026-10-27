@@ -20,7 +20,7 @@
     -webkit-touch-callout: none;
   }
   #hud {
-    position: fixed; left: 12px; top: 12px; right: 220px;
+    position: fixed; left: 12px; top: 12px; right: 150px;
     pointer-events: none; z-index: 2;
     display: flex; flex-wrap: wrap; gap: 8px 16px;
     font-size: 13px; line-height: 1.35; opacity: 0.92;
@@ -56,56 +56,34 @@
     padding: 8px 14px; font-size: 12px; max-width: min(92vw, 520px);
     text-align: center; color: #c9d4ee;
   }
-  #params {
+  #minimap {
     position: fixed; right: 12px; top: 12px; z-index: 3;
-    background: #111a2ee6; border: 1px solid #335; border-radius: 10px;
-    padding: 10px 12px; font-size: 12px; width: 200px;
-    pointer-events: auto;
+    width: 128px; height: 128px; pointer-events: none;
+    background: #0e1628ee; border: 1px solid #4a6a9aaa; border-radius: 10px;
+    box-shadow: 0 2px 10px #0008;
+    overflow: hidden;
   }
-  #params label { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 6px 0; }
-  #params input[type=range] { width: 96px; }
-  #params button {
-    width: 100%; margin-top: 8px; padding: 7px 0; border-radius: 8px;
-    border: 1px solid #4a6; background: #1a3a28; color: #dfffe8; cursor: pointer;
+  #minimap canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+  #minimap .cap {
+    position: absolute; left: 0; right: 0; bottom: 0;
+    font-size: 10px; text-align: center; color: #9eb6dc;
+    background: #0a1220cc; padding: 2px 0; letter-spacing: 0.02em;
   }
-  #params button:hover { background: #234e35; }
-  #params button.secondary {
-    border-color: #468; background: #1a2840; color: #d0e4ff;
-  }
-  #params button.secondary:hover { background: #243656; }
-  #params .title { font-weight: 600; color: #8ec5ff; margin-bottom: 4px; }
-  #params .craftRow { display: flex; gap: 6px; margin: 8px 0 2px; }
-  #params .craftRow button {
-    flex: 1; margin-top: 0; padding: 6px 0; font-size: 11px;
-    border: 1px solid #456; background: #162033; color: #b8c8e0;
-  }
-  #params .craftRow button.active {
-    border-color: #6eb6ff; background: #1e3a5c; color: #e8f2ff; font-weight: 600;
-  }
-  #params .craftRow button:hover { background: #243656; }
 </style>
 </head>
 <body>
 <div id="hud">
-  <span><b>Thrust Land</b> · 手感原型 <b>v9</b></span>
+  <span><b>Thrust Land</b> · 手感原型 <b>v10</b></span>
   <span id="craftLabel">机体 方块排喷</span>
   <span id="alt">高度 — m</span>
   <span id="fuel">燃料 —</span>
   <span id="stat">就绪</span>
 </div>
-<div id="params">
-  <div class="title">参数</div>
-  <div class="craftRow">
-    <button type="button" id="craftRect" class="active">方块·多喷口</button>
-    <button type="button" id="craftRocket">细长·单喷口</button>
-  </div>
-  <label>推力 <span id="vThrust">90</span><input id="thrust" type="range" min="40" max="360" value="90" /></label>
-  <label>偏角° <span id="vAngle">60</span><input id="angle" type="range" min="15" max="80" value="60" /></label>
-  <label>重力 <span id="vG">55</span><input id="g" type="range" min="20" max="120" value="55" /></label>
-  <label>阻尼 <span id="vDrag">0.35</span><input id="drag" type="range" min="0" max="80" value="35" /></label>
-  <button id="resetBtn" type="button">复位 (R)</button>
+<div id="minimap" aria-label="地面小地图">
+  <canvas id="mm" width="128" height="128"></canvas>
+  <div class="cap">地面 · 落点</div>
 </div>
-<div id="hint">单指按住拖动喷气 · 右上切换「方块·多喷口 / 细长·单喷口」（切换会复位）· 燃料有限 · 第二指忽略 · R 复位 · 开局约 3000 m 随机倾角</div>
+<div id="hint">单指按住拖动喷气 · 键 <b>1</b>/<b>2</b> 切换机体（会复位）· 燃料有限 · 第二指忽略 · R 复位 · 右上小地图对准落点 · 开局约 3000 m 随机倾角</div>
 <canvas id="c"></canvas>
 <script>
 (() => {
@@ -113,12 +91,12 @@
 
   const canvas = document.getElementById("c");
   const ctx = canvas.getContext("2d");
+  const mmCanvas = document.getElementById("mm");
+  const mmCtx = mmCanvas.getContext("2d");
   const statEl = document.getElementById("stat");
   const altEl = document.getElementById("alt");
   const fuelEl = document.getElementById("fuel");
   const craftLabelEl = document.getElementById("craftLabel");
-  const craftRectBtn = document.getElementById("craftRect");
-  const craftRocketBtn = document.getElementById("craftRocket");
 
   // World units: 1 unit ≈ 1 m. +Y is down (canvas-like). Ground at y = 0.
   const CRAFTS = {
@@ -160,11 +138,15 @@
     spawnAltitude: 3000,
     camLerp: 6,
     craftScreenFrac: 0.36,
-    // v9: screen-space thrust aim; simple sky bg; speed streaks; keep v7/v8 controls
+    // v10: continuous cam (no landing cut), no params panel, ground minimap
+    // keep v7–v9: screen-space thrust, simple sky, streaks, fuel, tilt, no select
     fuelMax: 100,
     fuelBurnPerSec: 7.5,
     spawnTiltMinDeg: 15,
     spawnTiltMaxDeg: 45,
+    padX: 0,
+    padHalfW: 90,
+    minimapRange: 420,
   };
 
   let craftType = "rect";
@@ -192,28 +174,7 @@
     cfg.nozzleMarginX = def.nozzleMarginX;
     cfg.nozzleY = def.nozzleY;
     craftLabelEl.textContent = "机体 " + def.label;
-    craftRectBtn.classList.toggle("active", craftType === "rect");
-    craftRocketBtn.classList.toggle("active", craftType === "rocket");
     if (doReset) reset();
-  }
-
-  function bindParams() {
-    const map = [
-      ["thrust", "vThrust", v => { cfg.thrust = +v; return String(v); }],
-      ["angle", "vAngle", v => { cfg.maxAngleDeg = +v; return String(v); }],
-      ["g", "vG", v => { cfg.gravity = +v; return String(v); }],
-      ["drag", "vDrag", v => { cfg.linearDrag = (+v) / 100; return ((+v) / 100).toFixed(2); }],
-    ];
-    for (const [id, vid, fn] of map) {
-      const el = document.getElementById(id);
-      const lab = document.getElementById(vid);
-      const sync = () => { lab.textContent = fn(el.value); };
-      el.addEventListener("input", sync);
-      sync();
-    }
-    document.getElementById("resetBtn").addEventListener("click", reset);
-    craftRectBtn.addEventListener("click", () => applyCraftType("rect", true));
-    craftRocketBtn.addEventListener("click", () => applyCraftType("rocket", true));
   }
 
   function resize() {
@@ -426,15 +387,9 @@
   canvas.addEventListener("pointerup", endPointer);
   canvas.addEventListener("pointercancel", endPointer);
   canvas.addEventListener("contextmenu", e => e.preventDefault());
-  // v8: block long-press select / iOS callout on game surface (UI panel still clickable)
-  document.addEventListener("contextmenu", (e) => {
-    if (e.target && e.target.closest && e.target.closest("#params")) return;
-    e.preventDefault();
-  });
-  document.addEventListener("selectstart", (e) => {
-    if (e.target && e.target.closest && e.target.closest("#params")) return;
-    e.preventDefault();
-  });
+  // v8: block long-press select / iOS callout on game surface
+  document.addEventListener("contextmenu", (e) => { e.preventDefault(); });
+  document.addEventListener("selectstart", (e) => { e.preventDefault(); });
 
   window.addEventListener("keydown", (e) => {
     if (e.key === "r" || e.key === "R") reset();
@@ -533,24 +488,12 @@
   }
 
   function updateCamera(dt) {
+    // v10: one continuous follow shot — never hard-cut / lock to ground framing on land
     const followX = craft.x;
     const followY = craft.y + world.h / 2 - playH * cfg.craftScreenFrac;
     const k = 1 - Math.exp(-cfg.camLerp * dt);
     cam.x += (followX - cam.x) * k;
-    let camYTarget = followY;
-
-    const alt = altitude();
-    if (alt < playH * 1.25) {
-      const gsy = world.groundY - followY + world.h / 2;
-      if (gsy > playH) {
-        camYTarget = world.groundY + world.h / 2 - playH;
-      }
-    }
-    cam.y += (camYTarget - cam.y) * k;
-    if (alt < playH * 1.25) {
-      const minCamY = world.groundY + world.h / 2 - playH;
-      if (cam.y < minCamY) cam.y = minCamY;
-    }
+    cam.y += (followY - cam.y) * k;
   }
 
   function drawSimpleSky() {
@@ -598,6 +541,136 @@
       ctx.lineTo(ox - ux * (len + jitter), oy - uy * (len + jitter));
       ctx.stroke();
     }
+  }
+
+  function drawLandingPad() {
+    const px = cfg.padX;
+    const half = cfg.padHalfW;
+    const gy = world.groundY;
+    ctx.fillStyle = "#2a3a28";
+    ctx.fillRect(px - half, gy - 2, half * 2, 6);
+    ctx.strokeStyle = "#8fd98f";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(px - half, gy);
+    ctx.lineTo(px + half, gy);
+    ctx.stroke();
+    // H marks
+    ctx.strokeStyle = "#c8f0c8aa";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(px - 18, gy - 1);
+    ctx.lineTo(px - 18, gy - 22);
+    ctx.moveTo(px + 18, gy - 1);
+    ctx.lineTo(px + 18, gy - 22);
+    ctx.moveTo(px - 18, gy - 12);
+    ctx.lineTo(px + 18, gy - 12);
+    ctx.stroke();
+    ctx.fillStyle = "#9ee09e88";
+    ctx.beginPath();
+    ctx.arc(px, gy - 1, 6, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  function drawMinimap() {
+    const s = mmCanvas.width;
+    const range = cfg.minimapRange;
+    const cx = s / 2, cy = s / 2 - 6;
+    mmCtx.clearRect(0, 0, s, s);
+    // ground plane tint
+    mmCtx.fillStyle = "#152033";
+    mmCtx.fillRect(0, 0, s, s);
+    mmCtx.fillStyle = "#1e2e22";
+    mmCtx.beginPath();
+    mmCtx.arc(cx, cy, s * 0.42, 0, Math.PI * 2);
+    mmCtx.fill();
+    mmCtx.strokeStyle = "#3a5a48";
+    mmCtx.lineWidth = 1;
+    mmCtx.stroke();
+
+    // grid
+    mmCtx.strokeStyle = "#ffffff10";
+    mmCtx.lineWidth = 1;
+    for (let i = -2; i <= 2; i++) {
+      const o = (i / 2) * (s * 0.38);
+      mmCtx.beginPath();
+      mmCtx.moveTo(cx + o, cy - s * 0.38);
+      mmCtx.lineTo(cx + o, cy + s * 0.38);
+      mmCtx.stroke();
+      mmCtx.beginPath();
+      mmCtx.moveTo(cx - s * 0.38, cy + o);
+      mmCtx.lineTo(cx + s * 0.38, cy + o);
+      mmCtx.stroke();
+    }
+
+    function toMap(wx, wz) {
+      // top-down: world X → map X; fake Z from craft heading/speed unused — keep pad-centered plane
+      return {
+        x: cx + (wx - cfg.padX) / range * (s * 0.38),
+        y: cy + wz / range * (s * 0.38),
+      };
+    }
+
+    // pad / landing target
+    const pad = toMap(cfg.padX, 0);
+    mmCtx.strokeStyle = "#8fd98f";
+    mmCtx.fillStyle = "#8fd98f33";
+    mmCtx.lineWidth = 1.5;
+    const padR = Math.max(6, cfg.padHalfW / range * (s * 0.38));
+    mmCtx.beginPath();
+    mmCtx.arc(pad.x, pad.y, padR, 0, Math.PI * 2);
+    mmCtx.fill();
+    mmCtx.stroke();
+    mmCtx.beginPath();
+    mmCtx.moveTo(pad.x - padR - 3, pad.y);
+    mmCtx.lineTo(pad.x + padR + 3, pad.y);
+    mmCtx.moveTo(pad.x, pad.y - padR - 3);
+    mmCtx.lineTo(pad.x, pad.y + padR + 3);
+    mmCtx.stroke();
+
+    // rocket horizontal projection (use craft.x; slight Z from lateral vel for readability)
+    const rz = Math.max(-range * 0.85, Math.min(range * 0.85, craft.vx * 0.35));
+    let rm = toMap(craft.x, rz);
+    // clamp into ring if far
+    const dx = rm.x - cx, dy = rm.y - cy;
+    const d = Math.hypot(dx, dy);
+    const maxD = s * 0.40;
+    if (d > maxD) {
+      rm = { x: cx + dx / d * maxD, y: cy + dy / d * maxD };
+    }
+    // heading tick
+    const ang = craft.angle;
+    mmCtx.save();
+    mmCtx.translate(rm.x, rm.y);
+    mmCtx.rotate(ang);
+    mmCtx.fillStyle = "#ffdd66";
+    mmCtx.strokeStyle = "#fff";
+    mmCtx.lineWidth = 1;
+    mmCtx.beginPath();
+    mmCtx.moveTo(0, -7);
+    mmCtx.lineTo(4.5, 6);
+    mmCtx.lineTo(0, 3.5);
+    mmCtx.lineTo(-4.5, 6);
+    mmCtx.closePath();
+    mmCtx.fill();
+    mmCtx.stroke();
+    mmCtx.restore();
+
+    // connector line pad → rocket
+    mmCtx.strokeStyle = "#ffffff28";
+    mmCtx.setLineDash([3, 3]);
+    mmCtx.beginPath();
+    mmCtx.moveTo(pad.x, pad.y);
+    mmCtx.lineTo(rm.x, rm.y);
+    mmCtx.stroke();
+    mmCtx.setLineDash([]);
+
+    // lateral offset readout (above HTML caption strip)
+    const dxm = craft.x - cfg.padX;
+    mmCtx.fillStyle = "#c8e0ff";
+    mmCtx.font = "10px ui-sans-serif, system-ui, sans-serif";
+    mmCtx.textAlign = "center";
+    mmCtx.fillText(`Δx ${dxm >= 0 ? "+" : ""}${dxm.toFixed(0)}m`, cx, 12);
   }
 
   function drawCraftBody() {
@@ -698,6 +771,7 @@
       ctx.stroke();
     }
 
+    drawLandingPad();
     drawCraftBody();
     drawSpeedStreaks();
 
@@ -777,6 +851,8 @@
     ctx.font = "12px ui-sans-serif, system-ui, sans-serif";
     ctx.textAlign = "center";
     ctx.fillText("喷气区 · 单指按住并拖动（全屏亦可）", world.w / 2, playH + 22);
+
+    drawMinimap();
   }
 
   let last = performance.now();
@@ -809,7 +885,6 @@
     requestAnimationFrame(frame);
   }
 
-  bindParams();
   resize();
   applyCraftType("rect", false);
   reset();
