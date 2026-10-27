@@ -46,13 +46,13 @@
 </head>
 <body>
 <div id="hud">
-  <span><b>Thrust Land</b> · 手感原型 <b>v4</b></span>
+  <span><b>Thrust Land</b> · 手感原型 <b>v5</b></span>
   <span id="alt">高度 — m</span>
   <span id="stat">就绪</span>
 </div>
 <div id="params">
   <div class="title">参数</div>
-  <label>推力 <span id="vThrust">180</span><input id="thrust" type="range" min="60" max="360" value="180" /></label>
+  <label>推力 <span id="vThrust">90</span><input id="thrust" type="range" min="40" max="360" value="90" /></label>
   <label>偏角° <span id="vAngle">60</span><input id="angle" type="range" min="15" max="80" value="60" /></label>
   <label>重力 <span id="vG">55</span><input id="g" type="range" min="20" max="120" value="55" /></label>
   <label>阻尼 <span id="vDrag">0.35</span><input id="drag" type="range" min="0" max="80" value="35" /></label>
@@ -72,7 +72,7 @@
   // World units: 1 unit ≈ 1 m. +Y is down (canvas-like). Ground at y = 0.
   // Altitude = groundY - craftLowestY (机体最低点到地面).
   const cfg = {
-    thrust: 180,
+    thrust: 90,
     maxAngleDeg: 60,
     gravity: 55,
     linearDrag: 0.35,
@@ -419,23 +419,138 @@
     }
   }
 
-  function draw() {
-    // Screen-space sky
+  function wrapMod(v, m) {
+    return ((v % m) + m) % m;
+  }
+
+  /** Multi-layer parallax sky — cam-driven, ground stays world-locked. */
+  function drawParallax() {
     ctx.clearRect(0, 0, world.w, world.h);
-    const sky = ctx.createLinearGradient(0, 0, 0, world.h);
-    sky.addColorStop(0, "#0a1428");
-    sky.addColorStop(0.55, "#141c33");
-    sky.addColorStop(1, "#1a2238");
+
+    // Deep sky gradient (very far: almost no scroll, slight hue shift with altitude)
+    const skyShift = wrapMod(cam.y * 0.008, world.h);
+    const sky = ctx.createLinearGradient(0, -skyShift * 0.3, 0, world.h - skyShift * 0.3);
+    sky.addColorStop(0, "#060b18");
+    sky.addColorStop(0.35, "#0c1830");
+    sky.addColorStop(0.7, "#152448");
+    sky.addColorStop(1, "#1e2f55");
     ctx.fillStyle = sky;
     ctx.fillRect(0, 0, world.w, world.h);
 
-    // Stars (screen space, subtle)
-    ctx.fillStyle = "#ffffff22";
-    for (let i = 0; i < 50; i++) {
-      const sx = (i * 97 + 13 + Math.floor(cam.x * 0.02)) % world.w;
-      const sy = (i * 53 + 29) % Math.max(1, playH);
-      if (sy < playH - 4) ctx.fillRect(sx, sy, 2, 2);
+    const clipH = playH; // don't draw parallax into control strip
+
+    // Layer 0 — far stars (slow)
+    {
+      const px = cam.x * 0.06, py = cam.y * 0.05;
+      ctx.fillStyle = "#ffffff55";
+      for (let i = 0; i < 70; i++) {
+        const sx = wrapMod(i * 97 + 13 - px, world.w);
+        const sy = wrapMod(i * 53 + 29 - py, Math.max(1, clipH));
+        const s = (i % 5 === 0) ? 2.5 : 1.5;
+        ctx.fillRect(sx, sy, s, s);
+      }
     }
+
+    // Layer 1 — mid starfield + vertical bands (clear horizontal drift)
+    {
+      const px = cam.x * 0.18, py = cam.y * 0.14;
+      for (let i = 0; i < 8; i++) {
+        const bx = wrapMod(i * (world.w / 5) - px * 0.6, world.w + 80) - 40;
+        ctx.fillStyle = i % 2 ? "#1a2a4a44" : "#24365c55";
+        ctx.fillRect(bx, 0, 48 + (i % 3) * 16, clipH);
+      }
+      ctx.fillStyle = "#c8d8ff66";
+      for (let i = 0; i < 40; i++) {
+        const sx = wrapMod(i * 137 + 41 - px, world.w);
+        const sy = wrapMod(i * 89 + 17 - py, Math.max(1, clipH));
+        ctx.beginPath();
+        ctx.arc(sx, sy, 1.2 + (i % 3) * 0.4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    // Layer 2 — cloud / haze bands (strong Y parallax — obvious during free-fall)
+    {
+      const px = cam.x * 0.32, py = cam.y * 0.28;
+      const bandH = 56;
+      for (let i = -2; i < Math.ceil(clipH / bandH) + 3; i++) {
+        const by = wrapMod(i * bandH - py, clipH + bandH * 2) - bandH;
+        if (by > clipH) continue;
+        const alpha = 0.10 + (i & 1) * 0.06;
+        ctx.fillStyle = `rgba(160,190,255,${alpha})`;
+        ctx.fillRect(0, by, world.w, bandH * 0.55);
+        // soft lumps
+        ctx.fillStyle = `rgba(200,220,255,${alpha + 0.05})`;
+        for (let j = 0; j < 5; j++) {
+          const cx = wrapMod(j * 170 + i * 40 - px, world.w + 120) - 60;
+          ctx.beginPath();
+          ctx.ellipse(cx, by + bandH * 0.3, 55, 14, 0, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    }
+
+    // Layer 3 — near mountains / jagged silhouettes (faster, still << 1)
+    {
+      const px = cam.x * 0.55, py = cam.y * 0.42;
+      const baseY = clipH * 0.72 + wrapMod(-py * 0.15, 40) - 20;
+      ctx.beginPath();
+      ctx.moveTo(-20, clipH);
+      const span = 160;
+      for (let x = -span; x < world.w + span; x += span) {
+        const wx = wrapMod(x - px, world.w + span * 2) - span;
+        const peak = 50 + ((Math.sin((x + px) * 0.01) + 1) * 35) + ((x / span) % 3) * 12;
+        ctx.lineTo(wx, baseY - peak);
+        ctx.lineTo(wx + span * 0.5, baseY - peak * 0.35);
+      }
+      ctx.lineTo(world.w + 20, clipH);
+      ctx.closePath();
+      ctx.fillStyle = "#1a2740cc";
+      ctx.fill();
+
+      // nearer ridge (even faster lateral)
+      const px2 = cam.x * 0.72, py2 = cam.y * 0.55;
+      const baseY2 = clipH * 0.82 + wrapMod(-py2 * 0.12, 30) - 15;
+      ctx.beginPath();
+      ctx.moveTo(-20, clipH);
+      for (let x = -120; x < world.w + 120; x += 120) {
+        const wx = wrapMod(x - px2, world.w + 240) - 120;
+        const peak = 28 + ((Math.cos((x + px2) * 0.014) + 1) * 22);
+        ctx.lineTo(wx, baseY2 - peak);
+        ctx.lineTo(wx + 60, baseY2 - peak * 0.4);
+      }
+      ctx.lineTo(world.w + 20, clipH);
+      ctx.closePath();
+      ctx.fillStyle = "#243552dd";
+      ctx.fill();
+    }
+
+    // Layer 4 — near grid streaks (very obvious relative motion vs world ground)
+    {
+      const px = cam.x * 0.85, py = cam.y * 0.7;
+      ctx.strokeStyle = "#6a8cc030";
+      ctx.lineWidth = 1;
+      const stepX = 48, stepY = 36;
+      const ox = -wrapMod(px, stepX);
+      const oy = -wrapMod(py, stepY);
+      for (let x = ox; x < world.w; x += stepX) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, clipH);
+        ctx.stroke();
+      }
+      ctx.strokeStyle = "#6a8cc022";
+      for (let y = oy; y < clipH; y += stepY) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(world.w, y);
+        ctx.stroke();
+      }
+    }
+  }
+
+  function draw() {
+    drawParallax();
 
     // World transform: camera
     ctx.save();
