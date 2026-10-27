@@ -67,11 +67,11 @@
   #controls {
     /* top-right only; clear of top-nozzle touch band */
     position: fixed; right: 12px; top: 12px; z-index: 3;
-    width: 128px;
+    width: 132px;
     display: flex; flex-direction: column; gap: 6px;
     pointer-events: auto;
   }
-  #controls .craftRow { display: flex; gap: 4px; }
+  #controls .craftRow { display: flex; flex-direction: column; gap: 4px; }
   #controls button {
     flex: 1; padding: 7px 4px; border-radius: 8px;
     border: 1px solid #456; background: #162033; color: #b8c8e0;
@@ -93,22 +93,23 @@
 </head>
 <body>
 <div id="hud">
-  <span><b>Thrust Land</b> · 手感原型 <b>v17</b></span>
-  <span id="craftLabel">机体 方块排喷</span>
+  <span><b>Thrust Land</b> · 手感原型 <b>v18</b></span>
+  <span id="craftLabel">机体 星舰·6着陆</span>
   <span id="alt">高度 — m</span>
   <span id="fuel">燃料 —</span>
   <span id="stat">就绪</span>
 </div>
 <div id="controls" aria-label="机体与复位">
   <div class="craftRow">
-    <button type="button" id="craftRect" class="active">方块·多喷口</button>
-    <button type="button" id="craftRocket">细长·单喷口</button>
+    <button type="button" id="craftRocket">猎鹰·3</button>
+    <button type="button" id="craftRect" class="active">星舰·6</button>
+    <button type="button" id="craftBooster">助推·3中心</button>
   </div>
   <button id="resetBtn" type="button">重置 (R)</button>
 </div>
 <div id="minimap" aria-label="地面小地图">
   <canvas id="mm" width="128" height="128"></canvas>
-  <div class="cap">地面 · 落点 · 1/2/R</div>
+  <div class="cap">地面 · 落点 · 1/2/3/R</div>
 </div>
 <canvas id="c"></canvas>
 <script>
@@ -125,31 +126,51 @@
   const craftLabelEl = document.getElementById("craftLabel");
   const craftRectBtn = document.getElementById("craftRect");
   const craftRocketBtn = document.getElementById("craftRocket");
+  const craftBoosterBtn = document.getElementById("craftBooster");
   const resetBtn = document.getElementById("resetBtn");
 
   // World units: 1 unit ≈ 1 m. +Y is down (canvas-like). Ground at y = 0.
   const CRAFTS = {
-    rect: {
-      id: "rect",
-      label: "方块排喷",
-      bodyW: 56,
-      bodyH: 96,
-      nozzleCount: 9,
-      topNozzleCount: 2,   // corner tips only (uniform nozzleLocal → ends)
-      nozzleMarginX: 6,
-      nozzleY: 0.48,
-      shape: "rect",
-    },
+    // 猎鹰级 → slim 烟头：着陆侧 3（中心+侧2，万向底喷锥）
     rocket: {
       id: "rocket",
-      label: "细长火箭",
+      label: "猎鹰·3着陆",
       bodyW: 28,
       bodyH: 120,
-      nozzleCount: 1,
-      topNozzleCount: 1,
-      nozzleMarginX: 0,
+      nozzleCount: 3,
+      topNozzleCount: 2,   // 两边角，≤90°
+      bottomLayout: "span",
+      nozzleMarginX: 4,
       nozzleY: 0.48,
       shape: "rocket",
+    },
+    // 星舰飞船侧 → stub 烟头：机腹 3×2 侧视投影 = 2 行×3
+    rect: {
+      id: "rect",
+      label: "星舰·6着陆",
+      bodyW: 56,
+      bodyH: 96,
+      nozzleCount: 6,
+      topNozzleCount: 0,   // 不抢 6 着陆表现
+      bottomLayout: "grid2x3",
+      nozzleMarginX: 8,
+      nozzleY: 0.48,
+      nozzleRowGap: 0.10,
+      shape: "rect",
+    },
+    // 助推器侧：着陆 3 紧凑中心；顶喷无
+    booster: {
+      id: "booster",
+      label: "助推器·3中心",
+      bodyW: 40,
+      bodyH: 130,
+      nozzleCount: 3,
+      topNozzleCount: 0,
+      bottomLayout: "compact3",
+      nozzleMarginX: 0,
+      nozzleY: 0.48,
+      nozzleCompactFrac: 0.42,
+      shape: "booster",
     },
   };
 
@@ -168,9 +189,14 @@
     topNozzleCount: CRAFTS.rect.topNozzleCount,
     nozzleMarginX: CRAFTS.rect.nozzleMarginX,
     nozzleY: CRAFTS.rect.nozzleY,
+    bottomLayout: CRAFTS.rect.bottomLayout,
+    nozzleRowGap: CRAFTS.rect.nozzleRowGap || 0.10,
+    nozzleCompactFrac: 0.42,
     spawnAltitude: 3000,
     camLerp: 6,
     craftScreenFrac: 0.36,
+    // v18: real-count 2D side nozzles — Falcon3 / Starship6(2×3) / Booster3-center
+    // v17: minimap to bottom (clear top nozzle band)
     // v16: top bank maxAngleDegTop 90° (bottom stays 60°); rect topNozzleCount=2 ends
     // v15: cigarette skin sprites + intro hand + ashtray pad
     // v14: top nozzles + finger side→bank (above=top / below=bottom)
@@ -248,9 +274,13 @@
     cfg.topNozzleCount = def.topNozzleCount;
     cfg.nozzleMarginX = def.nozzleMarginX;
     cfg.nozzleY = def.nozzleY;
+    cfg.bottomLayout = def.bottomLayout || "span";
+    cfg.nozzleRowGap = def.nozzleRowGap != null ? def.nozzleRowGap : 0.10;
+    cfg.nozzleCompactFrac = def.nozzleCompactFrac != null ? def.nozzleCompactFrac : 0.42;
     craftLabelEl.textContent = "机体 " + def.label;
     craftRectBtn.classList.toggle("active", craftType === "rect");
     craftRocketBtn.classList.toggle("active", craftType === "rocket");
+    craftBoosterBtn.classList.toggle("active", craftType === "booster");
     if (doReset) reset();
   }
 
@@ -258,6 +288,7 @@
     resetBtn.addEventListener("click", (e) => { e.preventDefault(); reset(); });
     craftRectBtn.addEventListener("click", (e) => { e.preventDefault(); applyCraftType("rect", true); });
     craftRocketBtn.addEventListener("click", (e) => { e.preventDefault(); applyCraftType("rocket", true); });
+    craftBoosterBtn.addEventListener("click", (e) => { e.preventDefault(); applyCraftType("booster", true); });
     // keep canvas from seeing pointer on the control cluster
     const box = document.getElementById("controls");
     for (const ev of ["pointerdown", "pointerup", "pointermove", "touchstart", "mousedown", "contextmenu"]) {
@@ -320,12 +351,31 @@
     const left = -half + cfg.nozzleMarginX;
     const right = half - cfg.nozzleMarginX;
     if (i < botN) {
+      const layout = cfg.bottomLayout || "span";
+      // Starship: belly 3×2 → side-view 2 rows × 3 (aft row then forward row)
+      if (layout === "grid2x3" && botN === 6) {
+        const row = Math.floor(i / 3); // 0=aft(tail), 1=forward
+        const col = i % 3;
+        const t = col / 2;
+        const x = left + (right - left) * t;
+        const yAft = cfg.bodyH * cfg.nozzleY;
+        const yFwd = cfg.bodyH * (cfg.nozzleY - (cfg.nozzleRowGap || 0.10));
+        return { x, y: row === 0 ? yAft : yFwd, bank: "bottom" };
+      }
+      // Booster: 3 compact center landing engines
+      if (layout === "compact3" && botN === 3) {
+        const span = half * (cfg.nozzleCompactFrac || 0.42);
+        const t = i / 2;
+        return { x: -span + 2 * span * t, y: cfg.bodyH * cfg.nozzleY, bank: "bottom" };
+      }
+      // Falcon etc: full-span linear (center + side 2 when n=3)
       const n = botN;
       const t = n <= 1 ? 0.5 : i / (n - 1);
       return { x: left + (right - left) * t, y: cfg.bodyH * cfg.nozzleY, bank: "bottom" };
     }
     const j = i - botN;
     const n = cfg.topNozzleCount;
+    if (n <= 0) return { x: 0, y: -cfg.bodyH * cfg.nozzleY, bank: "top" };
     const t = n <= 1 ? 0.5 : j / (n - 1);
     return { x: left + (right - left) * t, y: -cfg.bodyH * cfg.nozzleY, bank: "top" };
   }
@@ -522,8 +572,9 @@
 
   window.addEventListener("keydown", (e) => {
     if (e.key === "r" || e.key === "R") reset();
-    if (e.key === "1") applyCraftType("rect", true);
-    if (e.key === "2") applyCraftType("rocket", true);
+    if (e.key === "1") applyCraftType("rocket", true);
+    if (e.key === "2") applyCraftType("rect", true);
+    if (e.key === "3") applyCraftType("booster", true);
   });
 
   function applyThrustForces(dt) {
@@ -808,11 +859,12 @@
     const halfW = cfg.bodyW / 2, halfH = cfg.bodyH / 2;
     const shape = (CRAFTS[craftType] || CRAFTS.rect).shape;
     // filter tip = nose (up / -Y); burning end = tail (+Y)
-    const skinKey = shape === "rocket" ? "craft_butt_slim" : "craft_butt_stub";
+    // slim=猎鹰/助推器感；stub=星舰感
+    const skinKey = (shape === "rocket" || shape === "booster") ? "craft_butt_slim" : "craft_butt_stub";
     const skin = assets[skinKey];
     if (skin && skin.complete && skin.naturalWidth) {
       ctx.drawImage(skin, -halfW, -halfH, cfg.bodyW, cfg.bodyH);
-    } else if (shape === "rocket") {
+    } else if (shape === "rocket" || shape === "booster") {
       ctx.fillStyle = "#f2f6ff";
       ctx.strokeStyle = "#6eb6ff";
       ctx.lineWidth = 2.5;
