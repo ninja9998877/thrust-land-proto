@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>Thrust Land Proto — 按住调姿→落地</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #0b1020; font-family: ui-sans-serif, system-ui, "PingFang SC", "Noto Sans SC", sans-serif; color: #e8eefc; }
+  canvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: crosshair; }
+  #hud {
+    position: fixed; left: 12px; top: 12px; right: 12px;
+    pointer-events: none; z-index: 2;
+    display: flex; flex-wrap: wrap; gap: 8px 16px;
+    font-size: 13px; line-height: 1.35; opacity: 0.92;
+    text-shadow: 0 1px 2px #000a;
+  }
+  #hud b { color: #8ec5ff; font-weight: 600; }
+  #hint {
+    position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%);
+    z-index: 2; pointer-events: none;
+    background: #111a2ecc; border: 1px solid #335; border-radius: 10px;
+    padding: 8px 14px; font-size: 12px; max-width: min(92vw, 520px);
+    text-align: center; color: #c9d4ee;
+  }
+  #params {
+    position: fixed; right: 12px; top: 12px; z-index: 3;
+    background: #111a2ee6; border: 1px solid #335; border-radius: 10px;
+    padding: 10px 12px; font-size: 12px; width: 200px;
+    pointer-events: auto;
+  }
+  #params label { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 6px 0; }
+  #params input[type=range] { width: 96px; }
+  #params button {
+    width: 100%; margin-top: 8px; padding: 7px 0; border-radius: 8px;
+    border: 1px solid #4a6; background: #1a3a28; color: #dfffe8; cursor: pointer;
+  }
+  #params button:hover { background: #234e35; }
+  #params .title { font-weight: 600; color: #8ec5ff; margin-bottom: 4px; }
+</style>
+</head>
+<body>
+<div id="hud">
+  <span><b>Thrust Land</b> · 手感原型</span>
+  <span id="stat">就绪</span>
+</div>
+<div id="params">
+  <div class="title">参数</div>
+  <label>推力 <span id="vThrust">180</span><input id="thrust" type="range" min="60" max="360" value="180" /></label>
+  <label>偏角° <span id="vAngle">60</span><input id="angle" type="range" min="15" max="80" value="60" /></label>
+  <label>重力 <span id="vG">55</span><input id="g" type="range" min="20" max="120" value="55" /></label>
+  <label>阻尼 <span id="vDrag">0.15</span><input id="drag" type="range" min="0" max="50" value="15" /></label>
+  <button id="resetBtn" type="button">复位 (R)</button>
+</div>
+<div id="hint">触屏：一/两指按住喷气 · 鼠标：左键一喷口、右键另一喷口 · R 复位 · 目标：按住调姿→落地</div>
+<canvas id="c"></canvas>
+<script>
+(() => {
+  "use strict";
+
+  const canvas = document.getElementById("c");
+  const ctx = canvas.getContext("2d");
+  const statEl = document.getElementById("stat");
+
+  const cfg = {
+    thrust: 180,
+    maxAngleDeg: 60,
+    gravity: 55,
+    linearDrag: 0.15,
+    angularDrag: 2.2,
+    bodyW: 56,
+    bodyH: 96,
+    nozzleInsetX: 18,
+    nozzleY: 0.48, // local +Y is down in body space (screen-like)
+  };
+
+  // World: +Y down (canvas), gravity +Y
+  const world = { w: 800, h: 600, groundY: 0 };
+
+  const craft = {
+    x: 0, y: 0, vx: 0, vy: 0, angle: 0, omega: 0,
+  };
+
+  /** @type {{id:string,x:number,y:number,active:boolean,nx:number,ny:number,fx:number,fy:number,nozzle:number|null}[]} */
+  let pointers = [];
+
+  function bindParams() {
+    const map = [
+      ["thrust", "vThrust", v => { cfg.thrust = +v; return String(v); }],
+      ["angle", "vAngle", v => { cfg.maxAngleDeg = +v; return String(v); }],
+      ["g", "vG", v => { cfg.gravity = +v; return String(v); }],
+      ["drag", "vDrag", v => { cfg.linearDrag = (+v) / 100; return ((+v)/100).toFixed(2); }],
+    ];
+    for (const [id, vid, fn] of map) {
+      const el = document.getElementById(id);
+      const lab = document.getElementById(vid);
+      const sync = () => { lab.textContent = fn(el.value); };
+      el.addEventListener("input", sync);
+      sync();
+    }
+    document.getElementById("resetBtn").addEventListener("click", reset);
+  }
+
+  function resize() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    world.w = window.innerWidth;
+    world.h = window.innerHeight;
+    canvas.width = Math.floor(world.w * dpr);
+    canvas.height = Math.floor(world.h * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    world.groundY = world.h - 48;
+  }
+
+  function reset() {
+    craft.x = world.w * 0.5;
+    craft.y = world.h * 0.28;
+    craft.vx = 0;
+    craft.vy = 0;
+    craft.angle = 0; // 0 = upright, local +Y points world +Y (down)
+    craft.omega = 0;
+    pointers = [];
+    statEl.textContent = "已复位";
+  }
+
+  function rot(lx, ly, ang) {
+    const c = Math.cos(ang), s = Math.sin(ang);
+    return { x: lx * c - ly * s, y: lx * s + ly * c };
+  }
+
+  function nozzleLocal(i) {
+    // i=0 left, i=1 right; bottom edge relative to center
+    const sx = i === 0 ? -cfg.nozzleInsetX : cfg.nozzleInsetX;
+    const sy = cfg.bodyH * cfg.nozzleY;
+    return { x: sx, y: sy };
+  }
+
+  function nozzleWorld(i) {
+    const l = nozzleLocal(i);
+    const r = rot(l.x, l.y, craft.angle);
+    return { x: craft.x + r.x, y: craft.y + r.y };
+  }
+
+  /** Body local "down" axis in world (default thrust opposite = up) */
+  function bodyDown() {
+    return rot(0, 1, craft.angle);
+  }
+
+  function clampAngle(vec, maxDeg) {
+    const down = bodyDown();
+    const maxRad = maxDeg * Math.PI / 180;
+    let vx = vec.x, vy = vec.y;
+    const len = Math.hypot(vx, vy) || 1;
+    vx /= len; vy /= len;
+    // angle from body-down to desired
+    const cross = down.x * vy - down.y * vx; // sin
+    const dot = down.x * vx + down.y * vy;   // cos
+    let ang = Math.atan2(cross, dot);
+    if (ang > maxRad) ang = maxRad;
+    if (ang < -maxRad) ang = -maxRad;
+    const c = Math.cos(ang), s = Math.sin(ang);
+    // rotate down by ang
+    return {
+      x: down.x * c - down.y * s,
+      y: down.x * s + down.y * c,
+    };
+  }
+
+  function screenToWorld(clientX, clientY) {
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: (clientX - rect.left) * (world.w / rect.width),
+      y: (clientY - rect.top) * (world.h / rect.height),
+    };
+  }
+
+  function nearestFreeNozzle(wx, wy, occupied) {
+    let best = -1, bestD = Infinity;
+    for (let i = 0; i < 2; i++) {
+      if (occupied.has(i)) continue;
+      const n = nozzleWorld(i);
+      const d = (n.x - wx) ** 2 + (n.y - wy) ** 2;
+      if (d < bestD) { bestD = d; best = i; }
+    }
+    return best;
+  }
+
+  function occupiedNozzles(exceptId) {
+    const s = new Set();
+    for (const p of pointers) {
+      if (p.id !== exceptId && p.nozzle != null) s.add(p.nozzle);
+    }
+    return s;
+  }
+
+  function upsertPointer(id, clientX, clientY, fromMouseButton) {
+    const w = screenToWorld(clientX, clientY);
+    let p = pointers.find(x => x.id === id);
+    if (!p) {
+      const nozzle = nearestFreeNozzle(w.x, w.y, occupiedNozzles(id));
+      if (nozzle < 0) return;
+      p = { id, x: w.x, y: w.y, active: true, nx: 0, ny: 0, fx: 0, fy: 0, nozzle, button: fromMouseButton };
+      pointers.push(p);
+    } else {
+      p.x = w.x; p.y = w.y; p.active = true;
+      // keep nozzle binding while held
+    }
+  }
+
+  function removePointer(id) {
+    pointers = pointers.filter(p => p.id !== id);
+  }
+
+  // Touch
+  canvas.addEventListener("pointerdown", (e) => {
+    if (e.pointerType === "mouse" && e.button !== 0 && e.button !== 2) return;
+    canvas.setPointerCapture(e.pointerId);
+    const id = e.pointerType === "mouse" ? `mouse-${e.button}` : `t-${e.pointerId}`;
+    upsertPointer(id, e.clientX, e.clientY, e.button);
+    e.preventDefault();
+  }, { passive: false });
+
+  canvas.addEventListener("pointermove", (e) => {
+    const ids = e.pointerType === "mouse"
+      ? pointers.filter(p => p.id.startsWith("mouse-")).map(p => p.id)
+      : [`t-${e.pointerId}`];
+    for (const id of ids) {
+      if (!pointers.some(p => p.id === id)) continue;
+      // mouse move updates all active mouse buttons with same coords if needed
+      if (e.pointerType === "mouse") {
+        for (const p of pointers) {
+          if (p.id.startsWith("mouse-")) {
+            const w = screenToWorld(e.clientX, e.clientY);
+            // each mouse button keeps own? For dual mouse: L/R use same move — update that button's pointer only if it's the one; actually both should track cursor if we want second at same point — better: L and R both follow cursor when held (same aim) OR right stays at down pos. Spec: second finger = second nozzle. For mouse, left + right at same cursor is ok for aiming both; but then nearest binding at down matters.
+            p.x = w.x; p.y = w.y;
+          }
+        }
+        break;
+      } else {
+        upsertPointer(id, e.clientX, e.clientY);
+      }
+    }
+    e.preventDefault();
+  }, { passive: false });
+
+  function endPointer(e) {
+    if (e.pointerType === "mouse") {
+      removePointer(`mouse-${e.button}`);
+    } else {
+      removePointer(`t-${e.pointerId}`);
+    }
+  }
+  canvas.addEventListener("pointerup", endPointer);
+  canvas.addEventListener("pointercancel", endPointer);
+  canvas.addEventListener("contextmenu", e => e.preventDefault());
+
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "r" || e.key === "R") reset();
+  });
+
+  function applyThrustForces(dt) {
+    let active = 0;
+    for (const p of pointers) {
+      if (p.nozzle == null) continue;
+      const n = nozzleWorld(p.nozzle);
+      // Desired direction: from nozzle toward press point? Spec: 按下世界坐标与最近喷火口连线 = 推力向量方向；推力从喷口沿该方向施加
+      // Thrust vector direction along nozzle→press. Force on craft along that line.
+      // Newton: exhaust goes opposite; for feel proto, force on body = thrust * direction(nozzle → press) clamped vs body-down.
+      // Wait: rockets push opposite exhaust. Exhaust out bottom → force up. Press below/side aims thrust.
+      // "连线为推力向量方向；推力从喷口沿该方向施加（对机体的力沿连线，偏角相对机体向下轴钳制）"
+      // So force on body is along the line, clamped relative to body-down. Direction from nozzle to press = where we "point" the jet visually; force on craft is opposite to exhaust, so if jet shoots toward press (downish), force is opposite = upish.
+      // Visual: flame from nozzle toward press. Force on craft = -flameDir = press→nozzle? Or flameDir = nozzle→press and force = -flameDir?
+      // Typical: finger below craft → thrust up. Nozzle at bottom, press below → nozzle→press is down → force should be up = -(nozzle→press).
+      let dx = p.x - n.x;
+      let dy = p.y - n.y;
+      if (dx * dx + dy * dy < 1e-6) {
+        // default body down (exhaust down)
+        const d = bodyDown();
+        dx = d.x; dy = d.y;
+      }
+      const flame = clampAngle({ x: dx, y: dy }, cfg.maxAngleDeg);
+      // Force on craft opposite to exhaust/flame
+      const fx = -flame.x * cfg.thrust;
+      const fy = -flame.y * cfg.thrust;
+      p.nx = n.x; p.ny = n.y;
+      p.fx = fx; p.fy = fy;
+      p.flameX = flame.x; p.flameY = flame.y;
+
+      craft.vx += fx * dt;
+      craft.vy += fy * dt;
+
+      // Torque: force applied at nozzle offset from COM
+      const rx = n.x - craft.x;
+      const ry = n.y - craft.y;
+      const torque = rx * fy - ry * fx; // 2D cross
+      // I approx for rectangle
+      const I = (cfg.bodyW * cfg.bodyW + cfg.bodyH * cfg.bodyH) / 12 * 0.02;
+      craft.omega += (torque / Math.max(I, 1e-4)) * dt * 0.045;
+      active++;
+    }
+    return active;
+  }
+
+  function integrate(dt) {
+    craft.vy += cfg.gravity * dt;
+    craft.vx *= Math.max(0, 1 - cfg.linearDrag * dt);
+    craft.vy *= Math.max(0, 1 - cfg.linearDrag * 0.35 * dt);
+    craft.omega *= Math.max(0, 1 - cfg.angularDrag * dt);
+
+    craft.x += craft.vx * dt;
+    craft.y += craft.vy * dt;
+    craft.angle += craft.omega * dt;
+
+    // Soft walls
+    const margin = 40;
+    if (craft.x < margin) { craft.x = margin; craft.vx *= -0.3; }
+    if (craft.x > world.w - margin) { craft.x = world.w - margin; craft.vx *= -0.3; }
+
+    // Ground collision: approximate with body corners / center bottom
+    const halfW = cfg.bodyW / 2, halfH = cfg.bodyH / 2;
+    const corners = [
+      rot(-halfW, -halfH, craft.angle),
+      rot(halfW, -halfH, craft.angle),
+      rot(-halfW, halfH, craft.angle),
+      rot(halfW, halfH, craft.angle),
+    ];
+    let maxPen = 0;
+    for (const c of corners) {
+      const wy = craft.y + c.y;
+      const pen = wy - world.groundY;
+      if (pen > maxPen) maxPen = pen;
+    }
+    if (maxPen > 0) {
+      craft.y -= maxPen;
+      if (craft.vy > 0) craft.vy *= -0.25;
+      craft.vx *= 0.85;
+      // settle upright damping when slow
+      if (Math.abs(craft.vy) < 12 && Math.abs(craft.omega) < 1.2) {
+        craft.vy = 0;
+        craft.omega *= 0.5;
+        craft.angle *= 0.85;
+        if (Math.abs(craft.angle) < 0.03) craft.angle = 0;
+      } else {
+        // gentle upright torque on ground contact
+        craft.omega += -craft.angle * 2.5 * dt;
+      }
+    }
+
+    // Ceiling soft
+    if (craft.y < 30) { craft.y = 30; if (craft.vy < 0) craft.vy *= -0.2; }
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, world.w, world.h);
+
+    // sky gradient
+    const g = ctx.createLinearGradient(0, 0, 0, world.h);
+    g.addColorStop(0, "#141c33");
+    g.addColorStop(1, "#0b1020");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, world.w, world.h);
+
+    // stars
+    ctx.fillStyle = "#ffffff22";
+    for (let i = 0; i < 40; i++) {
+      const sx = (i * 97 + 13) % world.w;
+      const sy = (i * 53 + 29) % Math.floor(world.groundY - 20);
+      ctx.fillRect(sx, sy, 2, 2);
+    }
+
+    // ground
+    ctx.fillStyle = "#2a3348";
+    ctx.fillRect(0, world.groundY, world.w, world.h - world.groundY);
+    ctx.fillStyle = "#3d4d6b";
+    ctx.fillRect(0, world.groundY, world.w, 4);
+    ctx.fillStyle = "#6a7f55";
+    ctx.fillRect(0, world.groundY, world.w, 2);
+
+    // craft
+    ctx.save();
+    ctx.translate(craft.x, craft.y);
+    ctx.rotate(craft.angle);
+    // body rect
+    ctx.fillStyle = "#d8dee9";
+    ctx.strokeStyle = "#8ec5ff";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.rect(-cfg.bodyW / 2, -cfg.bodyH / 2, cfg.bodyW, cfg.bodyH);
+    ctx.fill();
+    ctx.stroke();
+    // nose mark (top = local -Y)
+    ctx.fillStyle = "#ff6b6b";
+    ctx.fillRect(-8, -cfg.bodyH / 2, 16, 10);
+    // nozzle dots
+    for (let i = 0; i < 2; i++) {
+      const l = nozzleLocal(i);
+      ctx.fillStyle = "#ffb454";
+      ctx.beginPath();
+      ctx.arc(l.x, l.y, 4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+
+    // thrust debug
+    for (const p of pointers) {
+      if (p.nozzle == null) continue;
+      const n = { x: p.nx, y: p.ny };
+      // flame direction (exhaust)
+      const fl = 48;
+      ctx.strokeStyle = "#ff9f43aa";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(n.x, n.y);
+      ctx.lineTo(n.x + p.flameX * fl, n.y + p.flameY * fl);
+      ctx.stroke();
+      // force on body
+      ctx.strokeStyle = "#5eead4";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(n.x, n.y);
+      ctx.lineTo(n.x + (p.fx / cfg.thrust) * 40, n.y + (p.fy / cfg.thrust) * 40);
+      ctx.stroke();
+      // aim point
+      ctx.fillStyle = "#ffffff66";
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "#fff8";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(n.x, n.y);
+      ctx.lineTo(p.x, p.y);
+      ctx.stroke();
+    }
+
+    // max angle cone guides at nozzles when thrusting
+    if (pointers.length) {
+      for (let i = 0; i < 2; i++) {
+        if (!pointers.some(p => p.nozzle === i)) continue;
+        const n = nozzleWorld(i);
+        const down = bodyDown();
+        const maxRad = cfg.maxAngleDeg * Math.PI / 180;
+        for (const sign of [-1, 1]) {
+          const c = Math.cos(maxRad * sign), s = Math.sin(maxRad * sign);
+          const dx = down.x * c - down.y * s;
+          const dy = down.x * s + down.y * c;
+          ctx.strokeStyle = "#ffffff22";
+          ctx.setLineDash([4, 4]);
+          ctx.beginPath();
+          ctx.moveTo(n.x, n.y);
+          ctx.lineTo(n.x + dx * 50, n.y + dy * 50);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+      }
+    }
+  }
+
+  let last = performance.now();
+  function frame(now) {
+    let dt = (now - last) / 1000;
+    last = now;
+    if (dt > 0.05) dt = 0.05;
+    // substeps
+    const steps = 2;
+    const h = dt / steps;
+    for (let s = 0; s < steps; s++) {
+      applyThrustForces(h);
+      integrate(h);
+    }
+    const spd = Math.hypot(craft.vx, craft.vy);
+    const deg = (craft.angle * 180 / Math.PI).toFixed(0);
+    statEl.textContent = `喷口 ${pointers.length}/2 · 倾角 ${deg}° · 速 ${spd.toFixed(0)} · 偏角上限 ${cfg.maxAngleDeg}°`;
+    draw();
+    requestAnimationFrame(frame);
+  }
+
+  windowParams();
+  resize();
+  reset();
+  window.addEventListener("resize", () => { resize(); });
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
