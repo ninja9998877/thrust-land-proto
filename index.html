@@ -140,7 +140,7 @@
       bodyW: 56,
       bodyH: 96,
       nozzleCount: 9,
-      topNozzleCount: 5,
+      topNozzleCount: 2,   // corner tips only (uniform nozzleLocal → ends)
       nozzleMarginX: 6,
       nozzleY: 0.48,
       shape: "rect",
@@ -176,7 +176,7 @@
     spawnAltitude: 3000,
     camLerp: 6,
     craftScreenFrac: 0.36,
-    // v16: top bank maxAngleDegTop 90° (bottom stays 60°)
+    // v16: top bank maxAngleDegTop 90° (bottom stays 60°); rect topNozzleCount=2 ends
     // v15: cigarette skin sprites + intro hand + ashtray pad
     // v14: top nozzles + finger side→bank (above=top / below=bottom)
     // v13: restore on-screen craft switch + reset buttons (no params sliders)
