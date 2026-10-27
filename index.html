@@ -127,7 +127,7 @@
 </head>
 <body>
 <div id="hud">
-  <span><b>Thrust Land</b> · feel proto <b>v21</b></span>
+  <span><b>Thrust Land</b> · feel proto <b>v22</b></span>
   <span id="levelLabel">Level 1/3</span>
   <span id="alt">Alt — m</span>
   <span id="fuel">Fuel —</span>
@@ -150,6 +150,9 @@
   <div class="cap">Ground · Pad · R after fail</div>
 </div>
 <canvas id="c"></canvas>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+<script src="./analytics.js"></script>
 <script>
 (() => {
   "use strict";
@@ -266,6 +269,7 @@
     spawnAltitude: 3000,
     camLerp: 6,
     craftScreenFrac: 0.36,
+    // v22: Firestore telemetry (unique landers / fails / per-level)
     // v21: L2 thrust +35% (thrustMult); L1/L3 base
     // v20: 3 levels + dry land lines; Reset same level on fail
     // v19: EN UI; no craft-name; Reset after fail; Landed!/Boom
@@ -876,12 +880,14 @@
         showOutcome("ok", `Landed!\n${witty}`, "Next");
         statEl.textContent = `Landed · L${levelIndex + 1} clear`;
       }
+      try { if (window.ThrustTelemetry) ThrustTelemetry.trackSuccess(levelIndex + 1); } catch (_) {}
     } else {
       phase = "crashed";
       spawnBoomFx();
       const why = !onPad ? "missed pad" : (angDeg > cfg.landMaxAngleDeg ? "tip-over" : "hard impact");
       showOutcome("fail", "Boom!");
       statEl.textContent = `Failed · L${levelIndex + 1} · ${why}`;
+      try { if (window.ThrustTelemetry) ThrustTelemetry.trackFail(levelIndex + 1); } catch (_) {}
     }
   }
 
@@ -1359,6 +1365,7 @@
         phase = "play";
         const deg = (craft.angle * 180 / Math.PI).toFixed(0);
         statEl.textContent = `Falling · tilt ${deg}° · fuel full`;
+        try { if (window.ThrustTelemetry) ThrustTelemetry.trackAttempt(); } catch (_) {}
       }
       drawIntro();
       requestAnimationFrame(frame);

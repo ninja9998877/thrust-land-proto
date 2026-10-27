@@ -1,0 +1,36 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Proto telemetry — public read; anon may create/update counters.
+    // No SA keys in clients. Abuse possible; OK for feel-proto.
+    match /telemetry/{docId} {
+      allow read: if true;
+      allow create, update: if docId == 'thrust_land'
+        && request.resource.data.keys().hasOnly([
+          'uniqueLanders', 'successCount', 'failCount', 'attempts',
+          'l1Success', 'l1Fail', 'l2Success', 'l2Fail', 'l3Success', 'l3Fail',
+          'updatedAt'
+        ])
+        && request.resource.data.uniqueLanders is number
+        && request.resource.data.successCount is number
+        && request.resource.data.failCount is number
+        && request.resource.data.attempts is number
+        && request.resource.data.l1Success is number
+        && request.resource.data.l1Fail is number
+        && request.resource.data.l2Success is number
+        && request.resource.data.l2Fail is number
+        && request.resource.data.l3Success is number
+        && request.resource.data.l3Fail is number
+        && request.resource.data.updatedAt is number;
+      allow delete: if false;
+    }
+    match /telemetry_landers/{landerId} {
+      allow read: if true;
+      allow create: if landerId.size() >= 8 && landerId.size() <= 64
+        && request.resource.data.keys().hasOnly(['at', 'firstLevel'])
+        && request.resource.data.at is number
+        && request.resource.data.firstLevel is number;
+      allow update, delete: if false;
+    }
+  }
+}

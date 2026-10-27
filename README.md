@@ -2,29 +2,37 @@
 
 Minimal web feel-test: three nozzle layouts, single-finger thrust, hold-to-steer → soft land.
 
-**No Unity / no levels-as-campaign / no ads.** Independent from Sort. Cigarette-skin art drop-in.
+**No Unity / no ads.** Independent from Sort. Cigarette-skin art drop-in.
 
-Current version: **v21**
+Current version: **v22**
 
 ## Play
 
 - **GitHub Pages**: https://ninja9998877.github.io/thrust-land-proto/
+- **Live stats**: https://ninja9998877.github.io/thrust-land-proto/stats.html
 - Local: open `index.html` in a browser
-- Mirror: https://raw.githack.com/ninja9998877/thrust-land-proto/main/index.html
+
+## v22 highlights
+
+- **Lightweight Firestore telemetry** (project `thrust-land-proto`)
+  - Unique landers (anon id in `localStorage`, counted once)
+  - Success landing count + fail/Boom count
+  - Attempts (each enter-play) and per-level L1/L2/L3 success/fail
+  - Dashboard: `stats.html` (public read)
+- Public web config only in the client — **no service-account keys**
 
 ## v21 highlights
 
-- **L2 thrust +35%**: per-nozzle `thrustMult: 1.35` (base 90 → 121.5); L1/L3 unchanged at 90
+- **L2 thrust +35%**: `thrustMult: 1.35` (base 90 → 121.5); L1/L3 unchanged
 
 ## v20 highlights
 
 - **3 levels** (HUD `Level 1/3`… — numbers only, **no craft/brand names**):
   - **L1**: bottom 3 + top 2 corner nozzles
   - **L2**: bottom 6, no top
-  - **L3**: bottom 3 compact-center, no top (more stable than span-without-top)
-- Soft land → dry black-humor English line + **Next** (L3 clear → short end line + **Again** loops to L1)
+  - **L3**: bottom 3 compact-center, no top
+- Soft land → dry black-humor English line + **Next** (L3 clear → **Again** loops to L1)
 - Crash → **Boom!** + **Reset** retries **same level**
-- English UI; Reset not always-on; cigarette skin + bottom minimap kept
 
 ## Controls
 
@@ -36,5 +44,8 @@ Current version: **v21**
 
 ## Files
 
-- `index.html` — single-page Canvas 2D proto
+- `index.html` — game
+- `analytics.js` — Firestore counters
+- `stats.html` — live dashboard
+- `firestore.rules` — anon increment + public read
 - `assets/` — cigarette skin PNGs

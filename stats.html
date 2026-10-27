@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Thrust Land · Stats</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    min-height: 100vh; background: #0b1020; color: #e8eefc;
+    font-family: ui-sans-serif, system-ui, sans-serif;
+    padding: 28px 20px 48px;
+  }
+  h1 { font-size: 22px; font-weight: 700; margin-bottom: 6px; }
+  .sub { color: #9eb6dc; font-size: 13px; margin-bottom: 22px; }
+  .sub a { color: #8ec5ff; }
+  .grid {
+    display: grid; gap: 12px;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    max-width: 720px;
+  }
+  .card {
+    background: #162033; border: 1px solid #3a5078; border-radius: 12px;
+    padding: 16px 14px;
+  }
+  .card .label { font-size: 12px; color: #9eb6dc; margin-bottom: 6px; }
+  .card .value { font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .card.hi { border-color: #5fd98f88; }
+  .card.bad { border-color: #ff884488; }
+  table {
+    margin-top: 22px; border-collapse: collapse; width: 100%; max-width: 720px;
+    font-size: 14px;
+  }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #2a3a58; }
+  th { color: #9eb6dc; font-weight: 600; }
+  #status { margin-top: 16px; font-size: 12px; color: #7a90b0; }
+  #status.err { color: #ff8a8a; }
+</style>
+</head>
+<body>
+  <h1>Thrust Land · Live stats</h1>
+  <p class="sub">
+    Feel-proto counters ·
+    <a href="./">Play</a> ·
+    project <code>thrust-land-proto</code>
+  </p>
+  <div class="grid">
+    <div class="card hi">
+      <div class="label">Unique landers</div>
+      <div class="value" id="uniqueLanders">—</div>
+    </div>
+    <div class="card hi">
+      <div class="label">Success landings</div>
+      <div class="value" id="successCount">—</div>
+    </div>
+    <div class="card bad">
+      <div class="label">Fail / Boom count</div>
+      <div class="value" id="failCount">—</div>
+    </div>
+    <div class="card">
+      <div class="label">Attempts (entered play)</div>
+      <div class="value" id="attempts">—</div>
+    </div>
+  </div>
+  <table>
+    <thead><tr><th>Level</th><th>Success</th><th>Fail</th></tr></thead>
+    <tbody>
+      <tr><td>L1</td><td id="l1Success">—</td><td id="l1Fail">—</td></tr>
+      <tr><td>L2</td><td id="l2Success">—</td><td id="l2Fail">—</td></tr>
+      <tr><td>L3</td><td id="l3Success">—</td><td id="l3Fail">—</td></tr>
+    </tbody>
+  </table>
+  <p id="status">Connecting…</p>
+
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+<script src="./analytics.js"></script>
+<script>
+(() => {
+  const ids = [
+    "uniqueLanders","successCount","failCount","attempts",
+    "l1Success","l1Fail","l2Success","l2Fail","l3Success","l3Fail"
+  ];
+  const status = document.getElementById("status");
+  function paint(data) {
+    for (const k of ids) {
+      const el = document.getElementById(k);
+      if (el) el.textContent = String(Number(data[k]) || 0);
+    }
+    const t = data.updatedAt ? new Date(data.updatedAt).toLocaleString() : "never";
+    status.textContent = "Live · updated " + t;
+    status.classList.remove("err");
+  }
+  ThrustTelemetry.subscribe((data, err) => {
+    if (err) {
+      status.textContent = "Error: " + (err.message || err);
+      status.classList.add("err");
+      return;
+    }
+    paint(data || ThrustTelemetry.DEFAULTS);
+  });
+})();
+</script>
+</body>
+</html>
