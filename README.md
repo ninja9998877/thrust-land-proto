@@ -6,8 +6,9 @@
 
 ## 可玩
 
-- 本地：用浏览器打开 `index.html`（或任意静态服务器根目录）
-- GitHub Pages：见仓库 Settings → Pages（`main` / `/`）
+- **GitHub Pages**：https://ninja9998877.github.io/thrust-land-proto/
+- 本地：浏览器直接打开 `index.html`
+- 备用：https://raw.githack.com/ninja9998877/thrust-land-proto/main/index.html
 
 ## 操作
 
