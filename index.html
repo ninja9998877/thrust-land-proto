@@ -97,7 +97,7 @@
 </head>
 <body>
 <div id="hud">
-  <span><b>Thrust Land</b> · 手感原型 <b>v15</b></span>
+  <span><b>Thrust Land</b> · 手感原型 <b>v16</b></span>
   <span id="craftLabel">机体 方块排喷</span>
   <span id="alt">高度 — m</span>
   <span id="fuel">燃料 —</span>
@@ -160,7 +160,8 @@
 
   const cfg = {
     thrust: 90,
-    maxAngleDeg: 60,
+    maxAngleDeg: 60,       // bottom bank cone half-angle
+    maxAngleDegTop: 90,    // top bank cone half-angle (≤90°)
     gravity: 55,
     linearDrag: 0.35,
     angularDrag: 8,
@@ -175,6 +176,7 @@
     spawnAltitude: 3000,
     camLerp: 6,
     craftScreenFrac: 0.36,
+    // v16: top bank maxAngleDegTop 90° (bottom stays 60°)
     // v15: cigarette skin sprites + intro hand + ashtray pad
     // v14: top nozzles + finger side→bank (above=top / below=bottom)
     // v13: restore on-screen craft switch + reset buttons (no params sliders)
@@ -552,7 +554,8 @@
       if (dx * dx + dy * dy < 1e-6) {
         dx = axis.x; dy = axis.y;
       }
-      const flame = clampAngle({ x: dx, y: dy }, cfg.maxAngleDeg, axis);
+      const maxDeg = bank === "top" ? cfg.maxAngleDegTop : cfg.maxAngleDeg;
+      const flame = clampAngle({ x: dx, y: dy }, maxDeg, axis);
       const fx = -flame.x * cfg.thrust;
       const fy = -flame.y * cfg.thrust;
       p.fx = fx; p.fy = fy;
@@ -1009,11 +1012,12 @@
     }
 
     if (pointers.length) {
-      const maxRad = cfg.maxAngleDeg * Math.PI / 180;
       for (const p of pointers) {
         if (p.nozzle == null) continue;
         const n = nozzleWorld(p.nozzle);
         const axis = n.bank === "top" ? bodyUp() : bodyDown();
+        const maxDeg = n.bank === "top" ? cfg.maxAngleDegTop : cfg.maxAngleDeg;
+        const maxRad = maxDeg * Math.PI / 180;
         for (const sign of [-1, 1]) {
           const c = Math.cos(maxRad * sign), s = Math.sin(maxRad * sign);
           const dx = axis.x * c - axis.y * s;
@@ -1092,7 +1096,7 @@
     const boundN = pointers.filter(p => p.nozzle != null).length;
     let status = `喷 ${firingN}/${boundN}/${totalNozzles()} · 倾角 ${deg}° · 速 ${spd.toFixed(0)}`;
     if (fuel <= 0) status += " · 燃料耗尽";
-    else status += ` · 偏角≤${cfg.maxAngleDeg}°`;
+    else status += ` · 偏角 底≤${cfg.maxAngleDeg}°/顶≤${cfg.maxAngleDegTop}°`;
     statEl.textContent = status;
     draw();
     requestAnimationFrame(frame);
